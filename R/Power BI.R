@@ -10,6 +10,7 @@ library(googlesheets4)
 library(googleAnalyticsR)
 library(salesforcer)
 library(rvest)
+library(plyr)
 
 ## set Google authentication token
 options(gargle_oauth_cache = ".secrets")
@@ -172,8 +173,10 @@ campaignPages <- ga_data(
          sec = round(engagementDuration %% 60, 0),
          min = (engagementDuration / 60) |> floor(),
          avgEngagementDuration = paste0(min, ':', sec)) %>% 
-  select(screenPageViews, totalUsers, engagementDuration, conversions, form_submits = 'conversions:form_submit', downloads = 'conversions:file_download', clicks = 'conversions:click') %>% 
-  left_join(select(pageType, c(pageTitle = linkTitles, pageType)), by = c('pageTitle')) 
+  select(pageTitle, screenPageViews, totalUsers, engagementDuration, avgEngagementDuration, conversions, form_submits = 'conversions:form_submit', downloads = 'conversions:file_download', clicks = 'conversions:click') %>% 
+  left_join(select(pageType, c(pageTitle = linkTitles, pageType)), by = c('pageTitle')) %>% 
+  mutate(icon = ifelse(pageType == 'Article', 4,
+                       ifelse(pageType == 'Report', 1, 0)))
 
 pages <- campaignPages$pageTitle # get list of page titles
 
@@ -191,7 +194,8 @@ trafficByRegion <- ga_data(
 ) %>% 
   filter(screenPageViews > 4) %>% 
   arrange(pageTitle) %>% 
-  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+  dplyr::rename(regionPageViews = screenPageViews) %>% 
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle)) 
 
 ## get acquisition
 
@@ -232,7 +236,7 @@ aquisitionSessions <- ga_data(
   
 aquisitionSessions <- correctTraffic(aquisitionSessions, 'session') %>% 
   group_by(pageTitle, defaultChannelGroup) %>% 
-  summarize(sessions = sum(sessions))
+  summarize(sessionsA = sum(sessions))
 
 # get aquisition - conversions
 aquisitionConversions <- ga_data(
@@ -248,10 +252,10 @@ aquisitionConversions <- ga_data(
 
 aquisitionConversions <- correctTraffic(aquisitionConversions, 'conversion') %>% 
   group_by(pageTitle, defaultChannelGroup) %>% 
-  summarize(conversions = sum(conversions),
-            downloads = sum(form_submit),
-            form_submits = sum(download),
-            clicks = sum(click)) 
+  summarize(conversionsA = sum(conversions),
+            downloadsA = sum(form_submit),
+            form_submitsA = sum(download),
+            clicksA = sum(click)) 
 
 # bind conversions to sessions
 aquisitionAll <- aquisitionSessions %>% 
@@ -271,16 +275,19 @@ aquisitionSocial <- ga_data(
 aquisitionSocial <- correctTraffic(aquisitionSocial, type = 'session') %>% 
   filter(medium == 'social') %>% 
   group_by(pageTitle, source) %>% 
-  summarize(sessions = sum(sessions),
-            screenPageViews = sum(screenPageViews)) 
+  summarize(sessionsS = sum(sessions),
+            screenPageViewsS = sum(screenPageViews)) 
+
+# bind all
+webAll <- campaignPages %>% 
+  rbind.fill(aquisitionAll) %>% 
+  rbind.fill(aquisitionSocial) %>% 
+  rbind.fill(trafficByRegion) 
 
 # push google analytics data
 print('push google analytics data')
 
-write_sheet(campaignPages, ss = ss, sheet = 'Web - All Pages')
-write_sheet(trafficByRegion, ss = ss, sheet = 'Web - Region')
-write_sheet(aquisitionAll, ss = ss, sheet = 'Web - Acquisition')
-write_sheet(aquisitionSocial, ss = ss, sheet = 'Web - Social Traffic')
+write_sheet(webAll, ss = ss, sheet = 'Web Traffic')
 
 ## get email stats and push to dataset
 getStoryStats <- function(campaign){
@@ -289,6 +296,7 @@ getStoryStats <- function(campaign){
   df <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Spark Stats (Unformatted)') %>% 
     mutate(date = as.Date(date))
   
+  # apply filters to grab emails and story links
   df1 <- df %>%
     filter(grepl(paste(linkUrls, collapse = '|'), url_1)) %>% 
     select(c(1:22))
@@ -307,12 +315,14 @@ getStoryStats <- function(campaign){
   
   colnames(df3)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
   
+  # bind emails
   allStoryStats <- df1 %>% rbind(df2) %>% rbind(df3) %>% 
     mutate(emailTitle = paste0('NL ', date, ': ', subject_line),
            date = as.Date(date),
            icon = '',
            story_title = gsub(' - RMI', '', story_title)) 
   
+  # add icon 
   allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),]
   allStoryStats[, 'icon'] <- as.numeric(rownames(allStoryStats))
   
@@ -374,7 +384,7 @@ sproutPostRequest <- function(page, dateRange){
     "post_type"),
     "filters" = c("customer_profile_id.eq(3244287, 2528134, 2528107, 2528104)",
                   dateRange),
-    "metrics" = c("lifetime.impressions", "lifetime.engagements", 	"lifetime.post_content_clicks", "lifetime.shares_count"), 
+    "metrics" = c("lifetime.impressions", "lifetime.engagements", "lifetime.post_content_clicks", "lifetime.shares_count"), 
     "timezone" = "America/Denver",
     "page" = paste(page))
   
@@ -392,11 +402,14 @@ sproutPostRequest <- function(page, dateRange){
   return(postStats)
 }
 
-allPosts <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', lifetime.impressions = '', lifetime.post_content_clicks = '', 
-                       lifetime.engagements = '', lifetime.shares_count = '', lifetime.reactions = '')[0, ]
+# create data frames
+allPosts <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
+                       lifetime.impressions = '', lifetime.post_content_clicks = '', 
+                       lifetime.engagements = '', lifetime.shares_count = '')[0, ]
 
-allPostsTags <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', lifetime.impressions = '', lifetime.post_content_clicks = '', 
-                           lifetime.engagements = '', lifetime.shares_count = '', lifetime.reactions = '', id = '')[0, ]
+allPostsTags <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
+                           lifetime.impressions = '', lifetime.post_content_clicks = '', 
+                           lifetime.engagements = '', lifetime.shares_count = '', id = '')[0, ]
 
 # get all posts since Jan 1, 2023
 print('get all posts from social channels dating back to Jan 1, 2023')
@@ -460,6 +473,7 @@ cleanDF <- function(df, type){
 allPosts <- cleanDF(allPosts, 'all')
 taggedPosts <- cleanDF(allPostsTags, 'tagged')
 
+# find posts
 taggedPosts <- allPosts %>% 
   filter(created_time == '2023-04-06' & grepl('OCI', text)) 
 
@@ -827,8 +841,8 @@ df <- campaignMembersEvents %>%
   rbind(clicksByProspect) %>% 
   left_join(select(all_accounts, c(AccountsName = Account, Domain = AccountDomain, AccountsIndustry = Industry, AccountType2 = AccountType)), by = c('Domain')) %>% 
   mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account),
-         Industry = ifelse(Account == 'Unknown' | !is.na(Industry), AccountsIndustry, Industry),
-         AccountType = ifelse(Account == 'Unknown' | !is.na(AccountType), AccountType2, AccountType),
+         Industry = ifelse(Account == 'Unknown' & !is.na(Industry), AccountsIndustry, Industry),
+         AccountType = ifelse(Account == 'Unknown' | (is.na(AccountType) & !is.na(AccountType2)), AccountType2, AccountType),
          Account = ifelse(Account == 'Unknown' & !is.na(AccountsName), AccountsName, Account),
          Account = ifelse(is.na(Account), 'Unknown', Account)) %>% 
   mutate(AccountType = ifelse(!is.na(AccountType), AccountType, 
@@ -850,12 +864,13 @@ df <- campaignMembersEvents %>%
          Audience1 = ifelse(grepl('Academic', AccountType) & (Account != '' | is.na(Account) | Account != 'Unknown'), 'Academic', Audience1),
          Audience1 = ifelse((is.na(Audience1) | Audience1 == '') & grepl('Foundation', AccountType), 'Foundation', Audience1)) %>% 
   mutate(Account = ifelse(is.na(Account), 'Unknown', Account),
-         Audience1 = ifelse(Account == 'Unknown', '', Audience1),
+         Audience1 = ifelse(Account == 'Unknown'|Audience1 == '', NA, Audience1),
          Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1),
          Account = ifelse(grepl('RMI', Account), 'Household', Account),
          Account = ifelse(Account == 'Unknown' & !is.na(govName), govName, Account),
-         Account = ifelse(grepl('Household', Account)|AccountType == 'Household', 'Household', Account),
+         #
          Account = ifelse(is.na(Account), 'Unknown', Account),
+         Account = ifelse(grepl('Household', Account), 'Household', Account),
          DonorType = ifelse(!is.na(Giving_Circle) & Giving_Circle != '', 'Giving Circle',
                             ifelse(!is.na(Last_Gift) & Last_Gift != '', 'Donor', NA)),
          Icon = ifelse(EngagementType == 'Report Download', 1, 
