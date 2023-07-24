@@ -11,19 +11,17 @@ library(googleAnalyticsR)
 library(salesforcer)
 library(rvest)
 
-# Set authentication token to be stored in a folder called `.secrets`
+## set Google authentication token
 options(gargle_oauth_cache = ".secrets")
-
-# Authenticate using token. If no browser opens, the authentication works.
 gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 
-## write to this sheet
+## push data to this Google sheet
 ss <- 'https://docs.google.com/spreadsheets/d/1BzLkm4jZr1WwMQsC4hBweKkvnBsWq4ZXlbyg7BYMsoA/edit?usp=sharing' ## OCI
 
 ### Monday.com
 print('GET MONDAY.COM DATA')
 
-### Monday.com API Token
+# API Token
 mondayToken <- 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjI2NDQzMjQyNiwiYWFpIjoxMSwidWlkIjozNTY3MTYyNSwiaWFkIjoiMjAyMy0wNi0yMlQxNjo0NTozOS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MjY4NTM2NiwicmduIjoidXNlMSJ9.KsZ9DFwEXeUuy23jRlCGauiyopcUFTHF6WciunTLFLM'
 
 getMondayCall <- function(x) {
@@ -84,7 +82,7 @@ metadataGA4 <- ga_meta(version = "data", property_id)
 currentDate <- Sys.Date()
 dates1 <- c("2023-01-01", paste(currentDate))
 
-### look for content group tag - system not set up yet
+## look for content group tag - system not set up yet
 contentGroup <- ga_data(
   property_id,
   metrics = c("engagedSessions", "sessions", "engagementRate", "averageSessionDuration", "screenPageViews", "newUsers", "totalUsers"),
@@ -97,7 +95,7 @@ contentGroup <- ga_data(
 
 groupPages <- contentGroup$pageTitle
 
-### OCI+ Campaign
+## OCI+ Campaign
 pageTitles <- c('Top Strategies to Cut Dangerous Methane Emissions from Landfills - RMI',
                 'OCI+ Update: Tackling Methane in the Oil and Gas Sector - RMI',
                 'Clean Energy 101: Methane-Detecting Satellites - RMI',
@@ -106,7 +104,7 @@ pageTitles <- c('Top Strategies to Cut Dangerous Methane Emissions from Landfill
                 'Know Your Oil and Gas - RMI',
                 'Intel from Above: Spotting Methane Super-Emitters with Satellites - RMI')
 
-### Get Full URLs 
+## Get Full URLs 
 getLinks <- ga_data(
   property_id,
   metrics = c("sessions", "totalUsers", "engagementRate", "userEngagementDuration", "screenPageViews"),
@@ -120,7 +118,7 @@ getLinks <- ga_data(
 linkTitles <- getLinks$pageTitle # get list of page titles
 linkUrls <- getLinks$fullPageUrl # get list of page URLs
 
-### get page type by scraping website metadata for each page
+## get page type by scraping website metadata for each page
 print('scrape website metadata')
 
 pageData <- data.frame(linkTitles, linkUrls, metadata1 = '', metadata2 = '')
@@ -128,7 +126,6 @@ for(i in 1:nrow(pageData)){
   
   url <- paste(pageData[i, 'linkUrls'])
   tryCatch( { 
-    #open connection to url 
     url_tb <- url %>%
       read_html() %>% 
       html_nodes('script') %>% 
@@ -159,7 +156,7 @@ pageType <- pageData %>%
                            ifelse(grepl('report', tolower(metadata2)), 'Report', '')))
 
 
-### get web traffic and key metrics for all pages
+## get web traffic and key metrics for all pages
 print('get page web traffic')
 
 campaignPages <- ga_data(
@@ -186,7 +183,7 @@ campaignPages <- campaignPages %>% # clean end of title
 
 write_sheet(campaignPages, ss = ss, sheet = 'Web - All Pages')
 
-### get page views by region
+## get page views by region
 trafficByRegion <- ga_data(
   property_id,
   metrics = c('screenPageViews'),
@@ -201,7 +198,7 @@ trafficByRegion <- ga_data(
 
 write_sheet(trafficByRegion, ss = ss, sheet = 'Web - Region')
 
-### get aquisition - sessions
+## get aquisition - sessions
 aquisitionSessions <- ga_data(
   property_id,
   metrics = c("sessions"),
@@ -222,14 +219,13 @@ aquisitionSessions <- ga_data(
          sessionMedium = ifelse(grepl('/t.co/', pageReferrer), 'social', sessionMedium),
          sessionMedium = ifelse(grepl('not set|none', sessionMedium)|sessionMedium == '', 'none', sessionMedium),
          sessionDefaultChannelGroup = ifelse(sessionMedium == 'social', 'Organic Social', 
-                                             #ifelse(pageReferrer == 'https://rmi.org/' & sessionMedium == 'none'|sessionMedium == 'direct'|sessionMedium == 'organic', 'rmi.org',
                                              ifelse(sessionMedium == 'email', 'Email', sessionDefaultChannelGroup))) %>% 
   group_by(pageTitle, sessionDefaultChannelGroup) %>% 
   summarize(sessions = sum(sessions)) %>% 
   rename(defaultChannelGroup = sessionDefaultChannelGroup) %>% 
   mutate(pageTitle = gsub(' - RMI', '', pageTitle))
 
-### get aquisition - conversions
+## get aquisition - conversions
 aquisitionConversions <- ga_data(
   property_id,
   metrics = c("conversions", 'conversions:form_submit', 'conversions:file_download', 'conversions:click'),
@@ -295,7 +291,7 @@ write_sheet(aquisitionSocial, ss = ss, sheet = 'Web - Social Traffic')
 ## get email stats and push to dataset
 
 getStoryStats <- function(campaign){
-  # connect to link from Email Stats spreadsheet
+  # find link on Email Stats spreadsheet
   df <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Spark Stats (Unformatted)') %>% 
     mutate(date = as.Date(date))
   
@@ -339,12 +335,12 @@ getStoryStats()
 ### SOCIAL MEDIA
 print('GET SOCIAL MEDIA DATA')
 
-### Sprout Social
+## Sprout Social API Token
 sproutToken <- 'Bearer ODA1MjE1fDE2ODg3MDIwMTh8ZTcxOTE0YzQtODRlMS00MTMyLWE4M2YtNmRkMzI3YzA4OWE1'
 sproutHeader <- c("Authorization" = sproutToken, "Accept" = "application/json", "Content-Type" = "application/json")
 currentDate <- paste(Sys.Date())
 
-### function - metadata request
+## function - metadata request
 getMetadata <- function(url) {
   request <- GET(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
                  add_headers(sproutHeader)
@@ -364,7 +360,7 @@ tags <- metadeta[["data"]]
 campaignTag <- tags %>% filter(text == 'RMI Brand')
 tagID <- paste(campaignTag$tag_id)
 
-###
+# function - make call
 getCall <- function(url, args) {
   request <- POST(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
                   body = toJSON(args, auto_unbox = TRUE),
@@ -493,7 +489,7 @@ write_sheet(allPosts, ss = ss, sheet = 'Social - All')
 ### SALESFORCE
 print('GET SALESFORCE DATA')
 
-### define campaign variables
+## define campaign variables
 campaigns_reports <- c('7016f0000023VTHAA2', '7016f0000013txRAAQ', '7016f0000023TgYAAU', '7016f0000013vm9AAA') 
 
 campaigns_events <- c('7016f0000023VTgAAM') # WBN: OCI +
@@ -504,13 +500,13 @@ methanelinks <- c('https://rmi.org/oci-update-tackling-methane-in-the-oil-and-ga
                   'https://rmi.org/clean-energy-101-methane-detecting-satellites/',
                   'https://rmi.org/waste-methane-101-driving-emissions-reductions-from-landfills/')
 
-### Pardot API Request Headers
+## Pardot API Request Headers
 token4 <- 'Bearer 00DU0000000HJDy!ARAAQJgwh2XkV39UIVg2Z99uwmN8TSRVUX5X35Hh31f6keFdINEUSQPaZYNspHJoydVA7dmirNBYPl.2recURpJoFsA.EpZz'
 token5 <- "Bearer 00DU0000000HJDy!ARAAQHBeCYE32ms1gj3R73nHD67hGKoheCUz4kNZyJOFwqfIcZ1y9DhWr7QEBE2k6xjtanaIqen.orUapCRWW2Eb0QkqLfmH"
 header4 <- c("Authorization" = token4, "Pardot-Business-Unit-Id" = "0Uv0B000000XZDkSAO")
 header5 <- c("Authorization" = token5, "Pardot-Business-Unit-Id" = "0Uv0B000000XZDkSAO")
 
-### FUNCTIONS
+## FUNCTIONS
 
 ## get email clicks for campaign
 get <- function(url, header) {
@@ -932,8 +928,8 @@ donations <- allOpps %>%
          difftime = difftime(DonationDate, CreatedDate, units = "days"),
          difftime = as.numeric(gsub("[^0-9.-]", "", difftime)),
          DiffTime = ifelse(difftime < 31, 1, difftime),
-         AttributtedValue = ifelse(DonationValue / (1/(1.00273-0.00273*DiffTime)) < 0, 0, DonationValue / (1/(1.00273-0.00273*DiffTime)))) %>% 
-  relocate(DonationValue, .before = AttributtedValue) %>% 
+         AttributtedValue = ifelse(DonationValue / (1/(1.00273 - 0.00273*DiffTime)) < 0, 0, DonationValue / (1/(1.00273 - 0.00273*DiffTime)))) %>% 
+  relocate(DonationValue, .before = AttributtedValue) %>%  
   left_join(uniqueDonations) %>% 
   mutate(AttributtedValue = round(AttributtedValue/count, 1))
 
