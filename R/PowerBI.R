@@ -82,18 +82,18 @@ metadataGA4 <- ga_meta(version = "data", property_id)
 currentDate <- Sys.Date()
 dates1 <- c("2023-01-01", paste(currentDate))
 
-## look for content group tag - system not set up yet
-contentGroup <- ga_data(
-  property_id,
-  metrics = c("engagedSessions", "sessions", "engagementRate", "averageSessionDuration", "screenPageViews", "newUsers", "totalUsers"),
-  dimensions = c("contentGroup", 'pageTitle', 'pagePath'),
-  date_range = dates1,
-  limit = -1
-) %>% 
-  filter(contentGroup != "(not set)") %>% 
-  filter(pageTitle != '')
-
-groupPages <- contentGroup$pageTitle
+## look for content group tag - not set up yet
+# contentGroup <- ga_data(
+#   property_id,
+#   metrics = c("engagedSessions", "sessions", "engagementRate", "averageSessionDuration", "screenPageViews", "newUsers", "totalUsers"),
+#   dimensions = c("contentGroup", 'pageTitle', 'pagePath'),
+#   date_range = dates1,
+#   limit = -1
+# ) %>% 
+#   filter(contentGroup != "(not set)") %>% 
+#   filter(pageTitle != '')
+# 
+# groupPages <- contentGroup$pageTitle
 
 ## OCI+ Campaign
 pageTitles <- c('Top Strategies to Cut Dangerous Methane Emissions from Landfills - RMI',
@@ -115,6 +115,7 @@ getLinks <- ga_data(
 ) %>% 
   mutate(fullPageUrl = paste0('https://', fullPageUrl))
 
+pages <- getLinks$pageTitle # get list of page titles
 linkTitles <- getLinks$pageTitle # get list of page titles
 linkUrls <- getLinks$fullPageUrl # get list of page URLs
 
@@ -167,21 +168,17 @@ campaignPages <- ga_data(
   dim_filters = ga_data_filter("pageTitle" == pages),
   limit = -1
 ) %>% 
-  mutate(engagementDuration = userEngagementDuration / totalUsers) %>% 
-  relocate(engagementDuration, .after = totalUsers) %>% 
-  select(-userEngagementDuration) %>% 
-  left_join(select(pageType, c(pageTitle = linkTitles, pageType)), by = c('pageTitle')) %>% 
-  mutate(sec = round(engagementDuration %% 60, 0),
+  mutate(engagementDuration = userEngagementDuration / totalUsers,
+         sec = round(engagementDuration %% 60, 0),
          min = (engagementDuration / 60) |> floor(),
          avgEngagementDuration = paste0(min, ':', sec)) %>% 
-  select(-sec, -min)
+  select(screenPageViews, totalUsers, engagementDuration, conversions, form_submits = 'conversions:form_submit', downloads = 'conversions:file_download', clicks = 'conversions:click') %>% 
+  left_join(select(pageType, c(pageTitle = linkTitles, pageType)), by = c('pageTitle')) 
 
 pages <- campaignPages$pageTitle # get list of page titles
 
 campaignPages <- campaignPages %>% # clean end of title
   mutate(pageTitle = gsub(' - RMI', '', pageTitle))
-
-write_sheet(campaignPages, ss = ss, sheet = 'Web - All Pages')
 
 ## get page views by region
 trafficByRegion <- ga_data(
@@ -196,9 +193,33 @@ trafficByRegion <- ga_data(
   arrange(pageTitle) %>% 
   mutate(pageTitle = gsub(' - RMI', '', pageTitle))
 
-write_sheet(trafficByRegion, ss = ss, sheet = 'Web - Region')
+## get acquisition
 
-## get aquisition - sessions
+# function - correct social media and email channel traffic
+correctTraffic <- function(df, type){
+  if(type == 'session'){
+    df <- df %>% 
+      rename(medium = sessionMedium) %>% 
+      rename(source = sessionSource) %>% 
+      rename(defaultChannelGroup = sessionDefaultChannelGroup)
+  } 
+  
+  df <- df %>% 
+    mutate(pageTitle = gsub(' - RMI', '', pageTitle)) %>% 
+    mutate(medium = ifelse(grepl('mail.google.com', source)|grepl('web-email|sf|outlook', medium), 'email', medium),
+           source = ifelse(grepl('linkedin', source), 'linkedin', source),
+           source = ifelse(grepl('facebook', source), 'facebook', source),
+           source = ifelse(grepl('dlvr.it|twitter', source)|source == 't.co', 'twitter', source),
+           medium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', source)|grepl('twitter|fbdvby', medium), 'social', medium),
+           medium = ifelse(grepl('/t.co/', pageReferrer), 'social', medium),
+           source = ifelse(grepl('/t.co/', pageReferrer), 'twitter', source),
+           defaultChannelGroup = ifelse(medium == 'social', 'Organic Social', 
+                                        ifelse(medium == 'email', 'Email', defaultChannelGroup))) 
+  
+  return(df)
+}
+
+# get aquisition - sessions
 aquisitionSessions <- ga_data(
   property_id,
   metrics = c("sessions"),
@@ -207,25 +228,13 @@ aquisitionSessions <- ga_data(
   dim_filters = ga_data_filter("pageTitle" == pages),
   limit = -1
 ) %>% 
-  arrange(pageTitle) %>% 
-  # correct social media and email channel traffic
-  mutate(sessionMedium = ifelse(grepl('mail.google.com', sessionSource)|grepl('web-email|sf|outlook', sessionMedium), 
-                                'email', sessionMedium),
-         sessionSource = ifelse(grepl('linkedin', sessionSource), 'linkedin', sessionSource),
-         sessionSource = ifelse(grepl('facebook', sessionSource), 'facebook', sessionSource),
-         sessionSource = ifelse(grepl('dlvr.it|twitter', sessionSource)|sessionSource == 't.co', 'twitter', sessionSource),
-         sessionMedium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', sessionSource)|grepl('twitter|fbdvby', sessionMedium), 'social', sessionMedium)) %>% 
-  mutate(pageReferrer = ifelse(grepl('rmi.org', pageReferrer), 'https://rmi.org/', pageReferrer),
-         sessionMedium = ifelse(grepl('/t.co/', pageReferrer), 'social', sessionMedium),
-         sessionMedium = ifelse(grepl('not set|none', sessionMedium)|sessionMedium == '', 'none', sessionMedium),
-         sessionDefaultChannelGroup = ifelse(sessionMedium == 'social', 'Organic Social', 
-                                             ifelse(sessionMedium == 'email', 'Email', sessionDefaultChannelGroup))) %>% 
-  group_by(pageTitle, sessionDefaultChannelGroup) %>% 
-  summarize(sessions = sum(sessions)) %>% 
-  rename(defaultChannelGroup = sessionDefaultChannelGroup) %>% 
-  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+  arrange(pageTitle)
+  
+aquisitionSessions <- correctTraffic(aquisitionSessions, 'session') %>% 
+  group_by(pageTitle, defaultChannelGroup) %>% 
+  summarize(sessions = sum(sessions))
 
-## get aquisition - conversions
+# get aquisition - conversions
 aquisitionConversions <- ga_data(
   property_id,
   metrics = c("conversions", 'conversions:form_submit', 'conversions:file_download', 'conversions:click'),
@@ -235,62 +244,47 @@ aquisitionConversions <- ga_data(
   limit = -1
 ) %>% 
   select(pageTitle, source, medium, conversions, pageReferrer, defaultChannelGroup, form_submit = 'conversions:form_submit', download = 'conversions:file_download', click = 'conversions:click') %>% 
-  arrange(pageTitle) %>% 
-  # correct social media and email channel traffic
-  mutate(medium = ifelse(grepl('mail.google.com', source)|grepl('web-email|sf|outlook', medium), 
-                         'email', medium),
-         source = ifelse(grepl('linkedin', source), 'linkedin', source),
-         source = ifelse(grepl('facebook', source), 'facebook', source),
-         source = ifelse(grepl('dlvr.it|twitter', source)|source == 't.co', 'twitter', source),
-         medium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', source)|grepl('twitter|fbdvby', medium), 'social', medium),
-         medium = ifelse(grepl('/t.co/', pageReferrer), 'social', medium),
-         defaultChannelGroup = ifelse(medium == 'social', 'Organic Social', 
-                                      ifelse(medium == 'email', 'Email', defaultChannelGroup))) %>% 
+  arrange(pageTitle)
+
+aquisitionConversions <- correctTraffic(aquisitionConversions, 'conversion') %>% 
   group_by(pageTitle, defaultChannelGroup) %>% 
   summarize(conversions = sum(conversions),
             downloads = sum(form_submit),
             form_submits = sum(download),
-            clicks = sum(click)) %>% 
-  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+            clicks = sum(click)) 
 
-aquisitionAll <- aquisitionSessions %>% # bind conversions to sessions
+# bind conversions to sessions
+aquisitionAll <- aquisitionSessions %>% 
   left_join(aquisitionConversions, by = c('pageTitle', 'defaultChannelGroup'))
 
-## acquisition - social
+# get acquisition - social
 aquisitionSocial <- ga_data(
   property_id,
   metrics = c("sessions", "screenPageViews"),
-  dimensions = c("pageTitle", "sessionSource", "sessionMedium", 'pageReferrer'),
+  dimensions = c("pageTitle", "sessionSource", "sessionMedium", 'pageReferrer', 'sessionDefaultChannelGroup'),
   date_range = dates1,
   dim_filters = ga_data_filter("pageTitle" == pages),
   limit = -1
 ) %>% 
-  arrange(pageTitle) %>% 
-  # correct social media and email channel traffic
-  mutate(sessionMedium = ifelse(grepl('mail.google.com', sessionSource)|grepl('web-email|sf|outlook', sessionMedium), 
-                                'email', sessionMedium),
-         sessionSource = ifelse(grepl('linkedin', sessionSource), 'linkedin', sessionSource),
-         sessionSource = ifelse(grepl('facebook', sessionSource), 'facebook', sessionSource),
-         sessionSource = ifelse(grepl('dlvr.it|twitter', sessionSource)|sessionSource == 't.co', 'twitter', sessionSource),
-         sessionMedium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', sessionSource)|grepl('twitter|fbdvby', sessionMedium), 
-                                'social', sessionMedium),
-         sessionMedium = ifelse(grepl('/t.co/', pageReferrer), 'social', sessionMedium),
-         sessionSource = ifelse(grepl('/t.co/', pageReferrer), 'twitter', sessionSource)) %>% 
-  filter(sessionMedium == 'social') %>% 
-  group_by(pageTitle, sessionSource) %>% 
+  arrange(pageTitle) 
+
+aquisitionSocial <- correctTraffic(aquisitionSocial, type = 'session') %>% 
+  filter(medium == 'social') %>% 
+  group_by(pageTitle, source) %>% 
   summarize(sessions = sum(sessions),
-            screenPageViews = sum(screenPageViews)) %>% 
-  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+            screenPageViews = sum(screenPageViews)) 
 
 # push google analytics data
 print('push google analytics data')
 
+write_sheet(campaignPages, ss = ss, sheet = 'Web - All Pages')
+write_sheet(trafficByRegion, ss = ss, sheet = 'Web - Region')
 write_sheet(aquisitionAll, ss = ss, sheet = 'Web - Acquisition')
 write_sheet(aquisitionSocial, ss = ss, sheet = 'Web - Social Traffic')
 
 ## get email stats and push to dataset
-
 getStoryStats <- function(campaign){
+  
   # find link on Email Stats spreadsheet
   df <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Spark Stats (Unformatted)') %>% 
     mutate(date = as.Date(date))
@@ -800,6 +794,9 @@ linkClicks <- clicksAll %>%
   mutate(url = sub('\\?(.*)', '', url)) %>% 
   filter(grepl(paste(methanelinks, collapse = '|'), url))
 
+accountsUnique <- all_accounts[!duplicated(all_accounts$Account) & !duplicated(all_accounts$Account, fromLast = TRUE),] %>% 
+  filter(!grepl('unknown|not provided|contacts created by revenue grid', Account))
+
 # clean clicks df
 clicksByProspect <- select(linkClicks, c(emailId = list_email_id, Pardot_URL = prospect_id, url, created_at)) %>% 
   mutate(Pardot_URL = paste0("http://pi.pardot.com/prospect/read?id=", as.character(Pardot_URL)),
@@ -812,11 +809,10 @@ clicksByProspect <- select(linkClicks, c(emailId = list_email_id, Pardot_URL = p
   left_join(select(emailStats, c(emailId = id, emailName)), by = 'emailId') %>% 
   mutate(CampaignName = gsub('Spark', '', emailName), Giving_Circle = '', Top_Philanthropic = '', Last_Gift = '') %>% 
   filter(!is.na(Domain)) %>% 
-  left_join(select(all_accounts, c(AccountsName = Account, Domain = AccountDomain, Industry, AccountType, TotalGiving, 
+  mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account)) %>% 
+  left_join(select(accountsUnique, c(AccountsName = Account, AccountDomain, Industry, AccountType, TotalGiving, 
                                    NumGifts, NumOpenOpps, AccountId, DB_IndustryCategory, NAICS1, SIC1)), 
-            by = c('Domain')) %>% 
-  mutate(Account = ifelse(grepl('unknown|[[Unknown]]|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account),
-         Account = ifelse(Account == 'Unknown' | !is.na(AccountsName), AccountsName, Account)) %>% 
+            by = c('Account' = 'AccountsName')) %>% 
   select(CampaignName, EngagementType, Id, RecordType, Status, CreatedDate, Name, Title, Domain, Email, Account, AccountType, Industry,
          TotalGiving, NumGifts, NumOpenOpps, Pardot_Score, Pardot_LastActivity, Pardot_URL, Country, State, City, Giving_Circle, Top_Philanthropic, Last_Gift, AccountId)
 
@@ -830,11 +826,11 @@ df <- campaignMembersEvents %>%
   filter(grepl('Register|Attended|Download|Email', Status) & !is.na(Domain)) %>% 
   rbind(clicksByProspect) %>% 
   left_join(select(all_accounts, c(AccountsName = Account, Domain = AccountDomain, AccountsIndustry = Industry, AccountType2 = AccountType)), by = c('Domain')) %>% 
-  mutate(Account = ifelse(grepl('unknown|[[Unknown]]|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account),
+  mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account),
          Industry = ifelse(Account == 'Unknown' | !is.na(Industry), AccountsIndustry, Industry),
-         AccountType = ifelse(Account == 'Unknown' | !is.na(Industry), AccountType2, AccountType),
-         Account = ifelse(Account == 'Unknown' | !is.na(AccountsName), AccountsName, Account)) %>% 
-  select(-c('AccountsName', 'AccountsIndustry')) %>% 
+         AccountType = ifelse(Account == 'Unknown' | !is.na(AccountType), AccountType2, AccountType),
+         Account = ifelse(Account == 'Unknown' & !is.na(AccountsName), AccountsName, Account),
+         Account = ifelse(is.na(Account), 'Unknown', Account)) %>% 
   mutate(AccountType = ifelse(!is.na(AccountType), AccountType, 
                               ifelse(grepl('\\.gov|\\.co\\.us', Domain), 'Government', 
                                      ifelse(grepl('org$', Domain) & !grepl('rmi\\.org|third-derivative', Domain), 'Organization', 
@@ -845,30 +841,28 @@ df <- campaignMembersEvents %>%
   mutate(Audience1 = ifelse(level == 'FEDERAL', 'National Gov.',
                             ifelse(level == 'STATE'|grepl('state of|commonwealth of', tolower(Account)), 'State Gov.',
                                    ifelse(level == 'LOCAL'|level == 'COUNTY'|grepl('city of|county of', tolower(Account)), 'Local Gov.',
-                                          ifelse(level == 'INTERNATIONAL', 'International Gov.', ''))))) %>% 
-  mutate(Audience1 = ifelse((grepl(audienceDomainsAccounts[1, 'multilateralDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'multilateralAccounts'], Account)), 'Multilateral Institution',
+                                          ifelse(level == 'INTERNATIONAL', 'International Gov.', '')))),
+         Audience1 = ifelse((grepl(audienceDomainsAccounts[1, 'multilateralDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'multilateralAccounts'], Account)), 'Multilateral Institution',
                             ifelse((grepl(audienceDomainsAccounts[1, 'NGODomains'], Domain)|grepl(audienceDomainsAccounts[1, 'NGOAccounts'], Account)), 'NGO',
-                                   ifelse((grepl(audienceDomainsAccounts[1, 'financialDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'financialAccounts'], Account)), 'Financial Entity', '')))) %>%
-  mutate(Audience1 = ifelse(grepl('Corporate', AccountType) & (Audience1 == ''|is.na(Audience1)), 'Other Corporate', Audience1),
+                                   ifelse((grepl(audienceDomainsAccounts[1, 'financialDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'financialAccounts'], Account)), 'Financial Entity', Audience1))),
+         Audience1 = ifelse(grepl('Corporate', AccountType) & (Audience1 == ''|is.na(Audience1)), 'Other Corporate', Audience1),
          Audience1 = ifelse(grepl('Foundation', AccountType), 'Foundation', Audience1),
-         Account = ifelse(grepl('RMI', Account), 'Household', Account),
          Audience1 = ifelse(grepl('Academic', AccountType) & (Account != '' | is.na(Account) | Account != 'Unknown'), 'Academic', Audience1),
-         Audience1 = ifelse((is.na(Audience1) | Audience1 == '') & grepl('Foundation', AccountType), 'Foundation', Audience1),
+         Audience1 = ifelse((is.na(Audience1) | Audience1 == '') & grepl('Foundation', AccountType), 'Foundation', Audience1)) %>% 
+  mutate(Account = ifelse(is.na(Account), 'Unknown', Account),
+         Audience1 = ifelse(Account == 'Unknown', '', Audience1),
+         Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1),
+         Account = ifelse(grepl('RMI', Account), 'Household', Account),
+         Account = ifelse(Account == 'Unknown' & !is.na(govName), govName, Account),
+         Account = ifelse(grepl('Household', Account)|AccountType == 'Household', 'Household', Account),
+         Account = ifelse(is.na(Account), 'Unknown', Account),
          DonorType = ifelse(!is.na(Giving_Circle) & Giving_Circle != '', 'Giving Circle',
                             ifelse(!is.na(Last_Gift) & Last_Gift != '', 'Donor', NA)),
          Icon = ifelse(EngagementType == 'Report Download', 1, 
                        ifelse(EngagementType == 'Event', 2, 
                               ifelse(EngagementType == 'Newsletter Click', 3, NA))),
-  ) %>%
-  relocate(Audience1, .after = AccountType) %>%
-  mutate(Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1)) %>% 
-  relocate(Audience2, .after = Audience1) %>% 
-  mutate(Account = ifelse(Account == 'Unknown' & !is.na(govName), govName, Account),
          Pardot_ID = sub("(.*)=", "", Pardot_URL)) %>% 
-  distinct(Id, CampaignName, .keep_all = TRUE) %>% 
-  mutate(DownloadTF = ifelse(grepl('Download', EngagementType), 1, NA),
-         EventTF = ifelse(grepl('Event', EngagementType), 1, NA),
-         EmailClickTF = ifelse(grepl('Click', EngagementType), 1, NA))
+  distinct(Id, CampaignName, .keep_all = TRUE)
 
 ## get donations attributed to campaigns
 donors <- df %>% 
@@ -940,17 +934,19 @@ oppsByProspect <- donations %>%
 # bind donations and clean dataframe
 final <- df %>% 
   left_join(oppsByProspect) %>% 
-  mutate(Engagements = 1,
+  mutate(DownloadTF = ifelse(grepl('Download', EngagementType), 1, NA),
+         EventTF = ifelse(grepl('Event', EngagementType), 1, NA),
+         EmailClickTF = ifelse(grepl('Click', EngagementType), 1, NA),
          GivingCircleTF = ifelse(Giving_Circle == ''|is.na(Giving_Circle), NA, 1),
          OpenOppTF = ifelse(NumOpenOpps == ''|NumOpenOpps == 0|is.na(NumOpenOpps), NA, 1),
          DonorTF = ifelse(DonorType == ''|is.na(DonorType), NA, 1),
          LastGift = as.numeric(Last_Gift),
-         LapsedDonorsTF = ifelse((LastGift > 549 & LastGift < 1825), 1, NA)) %>% 
+         LapsedDonorsTF = ifelse((LastGift > 549 & LastGift < 1825), 1, NA),
+         Engagements = 1) %>% 
   select(CampaignName, EngagementType, Icon, Id, RecordType, Status, EngagementDate = CreatedDate, Name, Title, Domain, Email, 
          LastGift, DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
          AccountTotalGiving = TotalGiving, NumGifts, NumOpenOpps, 
-         Pardot_URL, Pardot_ID, GivingCircleTF, OpenOppTF, DonorTF, LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) %>% 
-  mutate(Account = ifelse(grepl('Household', Account)|AccountType == 'Household', 'Household', Account))
+         Pardot_URL, Pardot_ID, GivingCircleTF, OpenOppTF, DonorTF, LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
 
 # push data
 print('push salesforce data')
