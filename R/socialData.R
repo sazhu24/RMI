@@ -78,7 +78,9 @@ allPosts <- data.frame(created_time = '', post_type = '', text = '', perma_link 
 allPostsTags <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', lifetime.impressions = '', lifetime.post_content_clicks = '', 
                            lifetime.engagements = '', lifetime.shares_count = '', lifetime.reactions = '', id = '')[0, ]
 
-# Pull all posts since Jan 1, 2023
+# get all posts since Jan 1, 2023
+print('get all posts from social channels dating back to Jan 1, 2023')
+
 for(i in 1:100){
   stats4 <- sproutPostRequest(i, paste0("created_time.in(2023-01-01T00:00:00..", currentDate, "T23:59:59)")) 
   if(is.null(stats4)){ break }
@@ -93,6 +95,8 @@ for(i in 1:100){
 }
 
 # clean response
+print('clean response')
+
 cleanDF <- function(df, type){
   
   posts <- df %>% 
@@ -151,6 +155,8 @@ taggedPosts <- taggedPosts %>%
          maxER = maxEngagementRate)
 
 # push data
+print('push social media data')
+
 write_sheet(taggedPost, ss = ss, sheet = 'Social - Campaign')
 write_sheet(allPosts, ss = ss, sheet = 'Social - All')
 

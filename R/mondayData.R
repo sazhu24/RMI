@@ -20,12 +20,16 @@ getMondayCall <- function(x) {
   return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
 }
 
-# Get Active Projects Board
+# get Active Projects Board
+print('get Active Projects board from Monday.com')
+
 query <- "query { boards (ids: 2208962537) { items { id name column_values{ id value text } } } } "
 res <- getMondayCall(query)
 activeProjects <- as.data.frame(res[["data"]][["boards"]][["items"]][[1]])
 
-# Iterate through APB to find projects with "Metrics Dashboard" in the promotion tactics column
+# iterate through APB to find projects with "Metrics Dashboard" in the promotion tactics column
+print('find Metrics Dashboard projects')
+
 campaigns <- data.frame(id = '', row = '', name = '')[0,]
 for(i in 1:nrow(activeProjects)){
   #i <- 1
@@ -37,16 +41,20 @@ for(i in 1:nrow(activeProjects)){
 }
 names(campaigns) <- c('id', 'row', 'name')
 
-# Filter to identify campaign of interest
+# filter to identify campaign of interest
+print('find target campaign and dashboard columns')
+
 targetCampaign <- campaigns %>% 
   filter(grepl('CIP: Coal v Gas campaign', name))
 
-# Get metrics, audiences, and ID
+# get metrics, audiences, and ID
 campaignRow <- as.numeric(targetCampaign[1, 'row'])
 campaignBoard <- activeProjects[[3]][[campaignRow]]
 campaignDF <- data.frame(campaignID = campaignBoard[16, 'text'], 
                          campaignAudiences = campaignBoard[15, 'text'], 
                          campaignMetrics = campaignBoard[11, 'text'])
 
-# Push data
+# push data
+print('push monday.com data')
+
 write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')

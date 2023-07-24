@@ -1,13 +1,497 @@
 library(tidyverse)
-library(openxlsx)
-library(googledrive)
-library(fuzzyjoin)
-library(tidytext)
-library(googlesheets4)
-library(salesforcer)
-library(rvest)
 library(xml2)
 library(httr)
+library(rjson)
+library(jsonlite)
+library(lubridate)
+library(openxlsx)
+library(googledrive)
+library(googlesheets4)
+library(googleAnalyticsR)
+library(salesforcer)
+library(rvest)
+
+# Set authentication token to be stored in a folder called `.secrets`
+options(gargle_oauth_cache = ".secrets")
+
+# Authenticate using token. If no browser opens, the authentication works.
+gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
+
+## write to this sheet
+ss <- 'https://docs.google.com/spreadsheets/d/1BzLkm4jZr1WwMQsC4hBweKkvnBsWq4ZXlbyg7BYMsoA/edit?usp=sharing' ## OCI
+
+### Monday.com
+print('GET MONDAY.COM DATA')
+
+### Monday.com API Token
+mondayToken <- 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjI2NDQzMjQyNiwiYWFpIjoxMSwidWlkIjozNTY3MTYyNSwiaWFkIjoiMjAyMy0wNi0yMlQxNjo0NTozOS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MjY4NTM2NiwicmduIjoidXNlMSJ9.KsZ9DFwEXeUuy23jRlCGauiyopcUFTHF6WciunTLFLM'
+
+getMondayCall <- function(x) {
+  request <- POST(url = "https://api.monday.com/v2",
+                  body = list(query = x),
+                  encode = 'json',
+                  add_headers(Authorization = mondayToken)
+  )
+  return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
+}
+
+# get Active Projects Board
+print('get Active Projects board from Monday.com')
+
+query <- "query { boards (ids: 2208962537) { items { id name column_values{ id value text } } } } "
+res <- getMondayCall(query)
+activeProjects <- as.data.frame(res[["data"]][["boards"]][["items"]][[1]])
+
+# iterate through APB to find projects with "Metrics Dashboard" in the promotion tactics column
+print('find Metrics Dashboard projects')
+
+campaigns <- data.frame(id = '', row = '', name = '')[0,]
+for(i in 1:nrow(activeProjects)){
+  #i <- 1
+  board <- activeProjects[[3]][[i]]
+  if(grepl('Metrics Dashboard', paste(board[11, 'text']))){
+    campaigns <- campaigns %>% 
+      rbind(c(paste(activeProjects[i, 'id']), i, c(paste(activeProjects[i, 'name'])))) 
+  }
+}
+names(campaigns) <- c('id', 'row', 'name')
+
+# filter to identify campaign of interest
+print('find target campaign and dashboard columns')
+
+targetCampaign <- campaigns %>% 
+  filter(grepl('CIP: Coal v Gas campaign', name))
+
+# get metrics, audiences, and ID
+campaignRow <- as.numeric(targetCampaign[1, 'row'])
+campaignBoard <- activeProjects[[3]][[campaignRow]]
+campaignDF <- data.frame(campaignID = campaignBoard[16, 'text'], 
+                         campaignAudiences = campaignBoard[15, 'text'], 
+                         campaignMetrics = campaignBoard[11, 'text'])
+
+# push data
+print('push monday.com data')
+
+write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')
+
+### WEB
+print('GET GOOGLE ANALYTICS DATA')
+
+## set GA credentials and property ID
+ga_auth(email = "sara.zhu@rmi.org")
+property_id <- 354053620
+metadataGA4 <- ga_meta(version = "data", property_id)
+currentDate <- Sys.Date()
+dates1 <- c("2023-01-01", paste(currentDate))
+
+### look for content group tag - system not set up yet
+contentGroup <- ga_data(
+  property_id,
+  metrics = c("engagedSessions", "sessions", "engagementRate", "averageSessionDuration", "screenPageViews", "newUsers", "totalUsers"),
+  dimensions = c("contentGroup", 'pageTitle', 'pagePath'),
+  date_range = dates1,
+  limit = -1
+) %>% 
+  filter(contentGroup != "(not set)") %>% 
+  filter(pageTitle != '')
+
+groupPages <- contentGroup$pageTitle
+
+### OCI+ Campaign
+pageTitles <- c('Top Strategies to Cut Dangerous Methane Emissions from Landfills - RMI',
+                'OCI+ Update: Tackling Methane in the Oil and Gas Sector - RMI',
+                'Clean Energy 101: Methane-Detecting Satellites - RMI',
+                'Waste Methane 101: Driving Emissions Reductions from Landfills - RMI',
+                'Key Strategies for Mitigating Methane Emissions from Municipal Solid Waste - RMI',
+                'Know Your Oil and Gas - RMI',
+                'Intel from Above: Spotting Methane Super-Emitters with Satellites - RMI')
+
+### Get Full URLs 
+getLinks <- ga_data(
+  property_id,
+  metrics = c("sessions", "totalUsers", "engagementRate", "userEngagementDuration", "screenPageViews"),
+  dimensions = c("pageTitle", 'fullPageUrl'),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pageTitles),
+  limit = -1
+) %>% 
+  mutate(fullPageUrl = paste0('https://', fullPageUrl))
+
+linkTitles <- getLinks$pageTitle # get list of page titles
+linkUrls <- getLinks$fullPageUrl # get list of page URLs
+
+### get page type by scraping website metadata for each page
+print('scrape website metadata')
+
+pageData <- data.frame(linkTitles, linkUrls, metadata1 = '', metadata2 = '')
+for(i in 1:nrow(pageData)){
+  
+  url <- paste(pageData[i, 'linkUrls'])
+  tryCatch( { 
+    #open connection to url 
+    url_tb <- url %>%
+      read_html() %>% 
+      html_nodes('script') %>% 
+      html_text() %>% 
+      as.data.frame() %>% 
+      rename(node = 1) %>% 
+      filter(grepl('schema.org', node)) %>% 
+      mutate(keywords = sub('.*keywords\\"\\:\\[', "", node),
+             keywords = gsub('\\].*', "", keywords))
+    
+    pageData[i, 'metadata1'] <- url_tb[1, 'keywords']
+    pageData[i, 'metadata2'] <- url_tb[2, 'keywords']
+    
+  }, error = function(e){
+    pageData[i, 'metadata1'] <- NA
+    pageData[i, 'metadata2'] <- NA
+  })
+  
+}
+
+pageData <- pageData %>% 
+  filter(!is.na(metadata1) & metadata1 != '')
+
+pageData <- pageData[!duplicated(linkTitles),]
+
+pageType <- pageData %>% 
+  mutate(pageType = ifelse(grepl('article', tolower(metadata2)), 'Article',
+                           ifelse(grepl('report', tolower(metadata2)), 'Report', '')))
+
+
+### get web traffic and key metrics for all pages
+print('get page web traffic')
+
+campaignPages <- ga_data(
+  property_id,
+  metrics = c('screenPageViews', "totalUsers", "userEngagementDuration", 'conversions', 'conversions:form_submit', 'conversions:file_download', 'conversions:click'),
+  dimensions = c("pageTitle"),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pages),
+  limit = -1
+) %>% 
+  mutate(engagementDuration = userEngagementDuration / totalUsers) %>% 
+  relocate(engagementDuration, .after = totalUsers) %>% 
+  select(-userEngagementDuration) %>% 
+  left_join(select(pageType, c(pageTitle = linkTitles, pageType)), by = c('pageTitle')) %>% 
+  mutate(sec = round(engagementDuration %% 60, 0),
+         min = (engagementDuration / 60) |> floor(),
+         avgEngagementDuration = paste0(min, ':', sec)) %>% 
+  select(-sec, -min)
+
+pages <- campaignPages$pageTitle # get list of page titles
+
+campaignPages <- campaignPages %>% # clean end of title
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+
+write_sheet(campaignPages, ss = ss, sheet = 'Web - All Pages')
+
+### get page views by region
+trafficByRegion <- ga_data(
+  property_id,
+  metrics = c('screenPageViews'),
+  dimensions = c("pageTitle", 'region', 'country'),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pages),
+  limit = -1
+) %>% 
+  filter(screenPageViews > 4) %>% 
+  arrange(pageTitle) %>% 
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+
+write_sheet(trafficByRegion, ss = ss, sheet = 'Web - Region')
+
+### get aquisition - sessions
+aquisitionSessions <- ga_data(
+  property_id,
+  metrics = c("sessions"),
+  dimensions = c("pageTitle", "sessionSource", "sessionMedium", "pageReferrer", 'sessionDefaultChannelGroup'),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pages),
+  limit = -1
+) %>% 
+  arrange(pageTitle) %>% 
+  # correct social media and email channel traffic
+  mutate(sessionMedium = ifelse(grepl('mail.google.com', sessionSource)|grepl('web-email|sf|outlook', sessionMedium), 
+                                'email', sessionMedium),
+         sessionSource = ifelse(grepl('linkedin', sessionSource), 'linkedin', sessionSource),
+         sessionSource = ifelse(grepl('facebook', sessionSource), 'facebook', sessionSource),
+         sessionSource = ifelse(grepl('dlvr.it|twitter', sessionSource)|sessionSource == 't.co', 'twitter', sessionSource),
+         sessionMedium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', sessionSource)|grepl('twitter|fbdvby', sessionMedium), 'social', sessionMedium)) %>% 
+  mutate(pageReferrer = ifelse(grepl('rmi.org', pageReferrer), 'https://rmi.org/', pageReferrer),
+         sessionMedium = ifelse(grepl('/t.co/', pageReferrer), 'social', sessionMedium),
+         sessionMedium = ifelse(grepl('not set|none', sessionMedium)|sessionMedium == '', 'none', sessionMedium),
+         sessionDefaultChannelGroup = ifelse(sessionMedium == 'social', 'Organic Social', 
+                                             #ifelse(pageReferrer == 'https://rmi.org/' & sessionMedium == 'none'|sessionMedium == 'direct'|sessionMedium == 'organic', 'rmi.org',
+                                             ifelse(sessionMedium == 'email', 'Email', sessionDefaultChannelGroup))) %>% 
+  group_by(pageTitle, sessionDefaultChannelGroup) %>% 
+  summarize(sessions = sum(sessions)) %>% 
+  rename(defaultChannelGroup = sessionDefaultChannelGroup) %>% 
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+
+### get aquisition - conversions
+aquisitionConversions <- ga_data(
+  property_id,
+  metrics = c("conversions", 'conversions:form_submit', 'conversions:file_download', 'conversions:click'),
+  dimensions = c("pageTitle", "source", "medium", 'pageReferrer', 'defaultChannelGroup'),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pages),
+  limit = -1
+) %>% 
+  select(pageTitle, source, medium, conversions, pageReferrer, defaultChannelGroup, form_submit = 'conversions:form_submit', download = 'conversions:file_download', click = 'conversions:click') %>% 
+  arrange(pageTitle) %>% 
+  # correct social media and email channel traffic
+  mutate(medium = ifelse(grepl('mail.google.com', source)|grepl('web-email|sf|outlook', medium), 
+                         'email', medium),
+         source = ifelse(grepl('linkedin', source), 'linkedin', source),
+         source = ifelse(grepl('facebook', source), 'facebook', source),
+         source = ifelse(grepl('dlvr.it|twitter', source)|source == 't.co', 'twitter', source),
+         medium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', source)|grepl('twitter|fbdvby', medium), 'social', medium),
+         medium = ifelse(grepl('/t.co/', pageReferrer), 'social', medium),
+         defaultChannelGroup = ifelse(medium == 'social', 'Organic Social', 
+                                      ifelse(medium == 'email', 'Email', defaultChannelGroup))) %>% 
+  group_by(pageTitle, defaultChannelGroup) %>% 
+  summarize(conversions = sum(conversions),
+            downloads = sum(form_submit),
+            form_submits = sum(download),
+            clicks = sum(click)) %>% 
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+
+aquisitionAll <- aquisitionSessions %>% # bind conversions to sessions
+  left_join(aquisitionConversions, by = c('pageTitle', 'defaultChannelGroup'))
+
+## acquisition - social
+aquisitionSocial <- ga_data(
+  property_id,
+  metrics = c("sessions", "screenPageViews"),
+  dimensions = c("pageTitle", "sessionSource", "sessionMedium", 'pageReferrer'),
+  date_range = dates1,
+  dim_filters = ga_data_filter("pageTitle" == pages),
+  limit = -1
+) %>% 
+  arrange(pageTitle) %>% 
+  # correct social media and email channel traffic
+  mutate(sessionMedium = ifelse(grepl('mail.google.com', sessionSource)|grepl('web-email|sf|outlook', sessionMedium), 
+                                'email', sessionMedium),
+         sessionSource = ifelse(grepl('linkedin', sessionSource), 'linkedin', sessionSource),
+         sessionSource = ifelse(grepl('facebook', sessionSource), 'facebook', sessionSource),
+         sessionSource = ifelse(grepl('dlvr.it|twitter', sessionSource)|sessionSource == 't.co', 'twitter', sessionSource),
+         sessionMedium = ifelse(grepl('linkedin|lnkd.in|facebook|twitter|instagram', sessionSource)|grepl('twitter|fbdvby', sessionMedium), 
+                                'social', sessionMedium),
+         sessionMedium = ifelse(grepl('/t.co/', pageReferrer), 'social', sessionMedium),
+         sessionSource = ifelse(grepl('/t.co/', pageReferrer), 'twitter', sessionSource)) %>% 
+  filter(sessionMedium == 'social') %>% 
+  group_by(pageTitle, sessionSource) %>% 
+  summarize(sessions = sum(sessions),
+            screenPageViews = sum(screenPageViews)) %>% 
+  mutate(pageTitle = gsub(' - RMI', '', pageTitle))
+
+# push google analytics data
+print('push google analytics data')
+
+write_sheet(aquisitionAll, ss = ss, sheet = 'Web - Acquisition')
+write_sheet(aquisitionSocial, ss = ss, sheet = 'Web - Social Traffic')
+
+## get email stats and push to dataset
+
+getStoryStats <- function(campaign){
+  # connect to link from Email Stats spreadsheet
+  df <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Spark Stats (Unformatted)') %>% 
+    mutate(date = as.Date(date))
+  
+  df1 <- df %>%
+    filter(grepl(paste(linkUrls, collapse = '|'), url_1)) %>% 
+    select(c(1:22))
+  
+  colnames(df1)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  df2 <- df %>%
+    filter(grepl(paste(linkUrls, collapse = '|'), url_2)) %>% 
+    select(c(1:18, 23:26))
+  
+  colnames(df2)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  df3 <- df %>%
+    filter(grepl(paste(linkUrls, collapse = '|'), url_3)) %>% 
+    select(c(1:18, 27:30))
+  
+  colnames(df3)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  allStoryStats <- df1 %>% rbind(df2) %>% rbind(df3) %>% 
+    mutate(emailTitle = paste0('NL ', date, ': ', subject_line),
+           date = as.Date(date),
+           icon = '',
+           story_title = gsub(' - RMI', '', story_title)) 
+  
+  allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),]
+  allStoryStats[, 'icon'] <- as.numeric(rownames(allStoryStats))
+  
+  # push data
+  print('push email stats data')
+  
+  write_sheet(df, ss = ss, sheet = 'All Email Stats')
+  write_sheet(allStoryStats, ss = ss, sheet = 'Campaign Email Stats')
+  
+}
+
+getStoryStats()
+
+### SOCIAL MEDIA
+print('GET SOCIAL MEDIA DATA')
+
+### Sprout Social
+sproutToken <- 'Bearer ODA1MjE1fDE2ODg3MDIwMTh8ZTcxOTE0YzQtODRlMS00MTMyLWE4M2YtNmRkMzI3YzA4OWE1'
+sproutHeader <- c("Authorization" = sproutToken, "Accept" = "application/json", "Content-Type" = "application/json")
+currentDate <- paste(Sys.Date())
+
+### function - metadata request
+getMetadata <- function(url) {
+  request <- GET(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
+                 add_headers(sproutHeader)
+  )
+  return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
+}
+
+# get profile IDs
+metadeta <- getMetadata(url = 'metadata/customer')
+profileIDs <- metadeta[["data"]]
+
+# get all tags
+metadeta <- getMetadata(url = 'metadata/customer/tags')
+tags <- metadeta[["data"]]
+
+# find campaign tag
+campaignTag <- tags %>% filter(text == 'RMI Brand')
+tagID <- paste(campaignTag$tag_id)
+
+###
+getCall <- function(url, args) {
+  request <- POST(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
+                  body = toJSON(args, auto_unbox = TRUE),
+                  add_headers(sproutHeader)
+  )
+  return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
+}
+
+# function - post analytics request
+sproutPostRequest <- function(page, dateRange){
+  
+  args <- list("fields" = c(
+    "created_time",
+    "perma_link",
+    "text",
+    "internal.tags.id",
+    "post_type"),
+    "filters" = c("customer_profile_id.eq(3244287, 2528134, 2528107, 2528104)",
+                  dateRange),
+    "metrics" = c("lifetime.impressions", "lifetime.engagements", 	"lifetime.post_content_clicks", "lifetime.shares_count"), 
+    "timezone" = "America/Denver",
+    "page" = paste(page))
+  
+  getStats <- getCall(url = 'analytics/posts', args = args)
+  if(is.null(getStats[["paging"]])) {
+    postStats <- NULL
+  } else {
+    metrics <- getStats[["data"]][["metrics"]]
+    internal <- getStats[["data"]][["internal"]]
+    postStats <- getStats[["data"]] %>% 
+      select(-c('metrics', 'internal')) %>% 
+      cbind(metrics) %>% 
+      cbind(internal)
+  }
+  return(postStats)
+}
+
+allPosts <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', lifetime.impressions = '', lifetime.post_content_clicks = '', 
+                       lifetime.engagements = '', lifetime.shares_count = '', lifetime.reactions = '')[0, ]
+
+allPostsTags <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', lifetime.impressions = '', lifetime.post_content_clicks = '', 
+                           lifetime.engagements = '', lifetime.shares_count = '', lifetime.reactions = '', id = '')[0, ]
+
+# get all posts since Jan 1, 2023
+print('get all posts from social channels dating back to Jan 1, 2023')
+
+for(i in 1:100){
+  stats4 <- sproutPostRequest(i, paste0("created_time.in(2023-01-01T00:00:00..", currentDate, "T23:59:59)")) 
+  if(is.null(stats4)){ break }
+  
+  # data frame - posts with all tags
+  stats5 <- stats4 %>% unnest(tags)
+  allPostsTags <- allPostsTags %>% rbind(stats5)
+  
+  # data frame - all posts (unique)
+  stats4 <- stats4 %>% select(-tags)
+  allPosts <- allPosts %>% rbind(stats4)
+}
+
+# clean response
+print('clean response')
+
+cleanDF <- function(df, type){
+  
+  posts <- df %>% 
+    mutate(engagementRate = round(as.numeric(lifetime.engagements)/as.numeric(lifetime.impressions), 3),
+           created_time = as.Date(sub('T(.*)', '', created_time)),
+           month = lubridate::month(ymd(created_time), label = TRUE, abbr = FALSE),
+           date = paste0(month, ' ', format(created_time,"%d"), ', ', format(created_time,"%Y")),
+           icon = '') %>% 
+    mutate(across(lifetime.impressions:engagementRate, ~ as.numeric(.x))) %>% 
+    filter(!is.na(lifetime.impressions))
+  
+  for(i in 1:nrow(posts))
+    if(grepl('LINKEDIN_COMPANY_UPDATE', posts[i, 'post_type'])){
+      posts[i, 'post_type'] <- "LinkedIn"
+      posts[i, 'icon'] <- paste(1)
+    } else if(grepl('FACEBOOK_POST', posts[i, 'post_type'])){
+      posts[i, 'post_type'] <- "Facebook"
+      posts[i, 'icon'] <- paste(2)
+    } else if(grepl('TWEET', posts[i, 'post_type'])){
+      posts[i, 'post_type'] <- "Twitter"
+      posts[i, 'icon'] <- paste(3)
+    } else if(grepl('INSTAGRAM_MEDIA', posts[i, 'post_type'])){
+      posts[i, 'post_type'] <- "Instagram"
+      posts[i, 'icon'] <- paste(4)
+    }
+  
+  if(type == 'tagged'){
+    posts <- posts %>% 
+      mutate(icon = as.numeric(icon)) %>% 
+      select(created_time, date, post_type, icon, id, text, impressions = lifetime.impressions, 
+             engagements = lifetime.engagements, engagementRate, shares = lifetime.shares_count, perma_link)
+  } else if(type == 'all'){
+    posts <- posts %>% 
+      mutate(icon = as.numeric(icon)) %>% 
+      select(created_time, date, post_type, icon, text, impressions = lifetime.impressions, 
+             engagements = lifetime.engagements, engagementRate, shares = lifetime.shares_count, perma_link) 
+  }
+  
+}
+
+allPosts <- cleanDF(allPosts, 'all')
+taggedPosts <- cleanDF(allPostsTags, 'tagged')
+
+taggedPosts <- allPosts %>% 
+  filter(created_time == '2023-04-06' & grepl('OCI', text)) 
+
+# set LinkedIn metrics thresholds
+maxImpressions <- taggedPosts[which(taggedPosts[,'post_type'] == 'LinkedIn'), 'impressions'] * 1.5
+maxEngagements <- taggedPosts[which(taggedPosts[,'post_type'] == 'LinkedIn'), 'engagements'] * 1.7
+maxEngagementRate <- taggedPosts[which(taggedPosts[,'post_type'] == 'LinkedIn'), 'engagementRate'] * 1.6
+
+taggedPosts <- taggedPosts %>% 
+  mutate(maxIM = maxImpressions,
+         maxEG = maxEngagements,
+         maxER = maxEngagementRate)
+
+# push data
+print('push social media data')
+
+write_sheet(taggedPost, ss = ss, sheet = 'Social - Campaign')
+write_sheet(allPosts, ss = ss, sheet = 'Social - All')
+
+
+### SALESFORCE
+print('GET SALESFORCE DATA')
 
 ### define campaign variables
 campaigns_reports <- c('7016f0000023VTHAA2', '7016f0000013txRAAQ', '7016f0000023TgYAAU', '7016f0000013vm9AAA') 
@@ -19,9 +503,6 @@ campaignEmailIDs <- c(1389821559, 1327603672)
 methanelinks <- c('https://rmi.org/oci-update-tackling-methane-in-the-oil-and-gas-sector/',
                   'https://rmi.org/clean-energy-101-methane-detecting-satellites/',
                   'https://rmi.org/waste-methane-101-driving-emissions-reductions-from-landfills/')
-
-## write to this sheet
-ss <- 'https://docs.google.com/spreadsheets/d/1_wUKRziRhF90ZfUemHNt3DaOjU2fQlTIPO8rNlA9doY/edit#gid=1033361432' ## OCI
 
 ### Pardot API Request Headers
 token4 <- 'Bearer 00DU0000000HJDy!ARAAQJgwh2XkV39UIVg2Z99uwmN8TSRVUX5X35Hh31f6keFdINEUSQPaZYNspHJoydVA7dmirNBYPl.2recURpJoFsA.EpZz'
@@ -172,7 +653,7 @@ events <- campaign_list %>%
 
 # get campaign members and join to contact/lead/account info
 getCampaignMembers <- function(campaignIdList, campaignType) {
-  
+
   # get campaign members
   if(length(campaignIdList) == 0){
     return()
@@ -480,4 +961,5 @@ print('push salesforce data')
 
 write_sheet(final, ss = ss, sheet = 'Salesforce - All')
 write_sheet(donations, ss = ss, sheet = 'Salesforce - Donations')
+
 
