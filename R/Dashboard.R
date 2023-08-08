@@ -47,12 +47,12 @@ gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 ## GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
 
-### 
-
-campaign <- 'OCI'
-
 ## push data to this Google sheet
 ss <- 'https://docs.google.com/spreadsheets/d/1BzLkm4jZr1WwMQsC4hBweKkvnBsWq4ZXlbyg7BYMsoA/edit?usp=sharing' ## OCI
+
+
+### CAMPAIGN
+campaign <- 'OCI'
 
 ## get campaign key
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
@@ -253,7 +253,6 @@ getReferrals <- function(propertyID, pages, site = 'rmi.org'){
   return(referrals)
   
 }
-
 
 ###
 
@@ -1300,9 +1299,6 @@ write_sheet(campaignPosts, ss = ss, sheet = 'Social - Campaign')
 ##### Monday.com
 print('GET MONDAY.COM DATA')
 
-# API Token
-mondayToken <- 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjI2NDQzMjQyNiwiYWFpIjoxMSwidWlkIjozNTY3MTYyNSwiaWFkIjoiMjAyMy0wNi0yMlQxNjo0NTozOS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MjY4NTM2NiwicmduIjoidXNlMSJ9.KsZ9DFwEXeUuy23jRlCGauiyopcUFTHF6WciunTLFLM'
-
 getMondayCall <- function(x) {
   request <- POST(url = "https://api.monday.com/v2",
                   body = list(query = x),
@@ -1354,213 +1350,3 @@ print('push monday.com data')
 write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')
 
 
-
-
-### REFERRALS
-## get campaign key
-referralSites <- read_sheet('https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843')
-
-referrals <- referralSites %>% mutate(rows = '')
-referrals[, 'rows'] <- as.numeric(rownames(referrals)) + 1
-
-
-referrals <- referrals %>% 
-  mutate(website = paste0('https://www.', media),
-         title = gs4_formula(paste0('=HYPERLINK(B', rows, ', IMPORTXML(B', rows, ', "//head//title") )')))
-
-write_sheet(referrals, ss = 'https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843', sheet = 'Referrals')
-
-referralSites <- read_sheet('https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843')
-
-referrals <- referralSites %>% 
-  mutate(title = sub('( -| —| \\|)(.*)', '', title),
-         title = ifelse(grepl('^Home$|N/A', title), '', title)) 
-  
-write_sheet(referrals, ss = 'https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843', sheet = 'Referrals2')
-
-
-
-referralSites <- read_sheet('https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843', sheet = 'All Referral Sites')
-
-pageTraffic <- ga_data(
-  rmiPropertyID,
-  metrics = c("sessions"),
-  dimensions = c("sessionSource", "sessionMedium"),
-  date_range = dates1,
-  limit = -1
-) %>% 
-  filter(sessionMedium == 'referral') %>% 
-  arrange(-sessions) 
-
-ref <- pageTraffic %>% 
-  inner_join(select(referralSites, c(media = title, domain, mediaType = category, mediaSubtype = category2)), by = c('sessionSource' = 'domain')) %>% 
-  mutate(mediaSubtype = str_to_title(mediaSubtype)) %>% 
-  filter(!grepl('Recruiting', mediaType))
-
-write_sheet(ref, 'https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843', sheet = 'All Referral Sites')
-
-
-
-# newSitePages <- ga_data(
-#   property_id,
-#   metrics = c('screenPageViews', "totalUsers", "userEngagementDuration"),
-#   dimensions = c("pageTitle"),
-#   date_range = dates1,
-#   limit = -1
-# ) %>% 
-#   filter(screenPageViews > 500) %>% 
-#   mutate(engagementDuration = userEngagementDuration / totalUsers,
-#          sec = round(engagementDuration %% 60, 0),
-#          sec = ifelse(sec < 10, paste0('0', sec), sec),
-#          min = (engagementDuration / 60) |> floor(),
-#          avgEngagementDuration = paste0(min, ':', sec)) %>% 
-#   select(pageTitle, screenPageViews, totalUsers, engagementDuration, avgEngagementDuration) %>% 
-#   mutate(pageType = 'New Website',
-#          icon = 5)
-# 
-# pages <- newSitePages$pageTitle
-
-## look for content group tag - not set up yet
-# contentGroup <- ga_data(
-#   property_id,
-#   metrics = c("sessions"),
-#   dimensions = c('pageTitle', 'pagePath', 'campaignId', 'campaignName'),
-#   date_range = dates1,
-#   limit = -1
-# ) %>% 
-#   filter(contentGroup != "(not set)") %>%
-#   filter(pageTitle != '')
-# 
-# pages <- contentGroup$pageTitle
-
-## OCI+ Campaign
-# pages <- c('Top Strategies to Cut Dangerous Methane Emissions from Landfills - RMI',
-#           'OCI+ Update: Tackling Methane in the Oil and Gas Sector - RMI',
-#           'Clean Energy 101: Methane-Detecting Satellites - RMI',
-#           'Waste Methane 101: Driving Emissions Reductions from Landfills - RMI',
-#           'Key Strategies for Mitigating Methane Emissions from Municipal Solid Waste - RMI',
-#           'Know Your Oil and Gas - RMI',
-#           'Intel from Above: Spotting Methane Super-Emitters with Satellites - RMI')
-
-
-
-
-# mutate(AccountType = ifelse(!is.na(AccountType), AccountType, 
-#                             ifelse(grepl('\\.gov|state.co.us|state.mn.us', Domain)|AccountType == 'Government', 'Government', 
-#                                    ifelse(grepl('org$', Domain) & !grepl('rmi\\.org|third-derivative', Domain), 'Organization', 
-#                                           ifelse(grepl('edu$', Domain), 'Academic', 
-#                                                  ifelse(grepl('Household', Account), 'Household', AccountType))))))
-# mutate(Audience1 = ifelse(level == 'FEDERAL', 'National Gov.',
-#                           ifelse(level == 'STATE'|grepl('state of|commonwealth of', tolower(Account)), 'State Gov.',
-#                                  ifelse(level == 'LOCAL'|level == 'COUNTY'|grepl('city of|county of', tolower(Account)), 'Local Gov.',
-#                                         ifelse(level == 'INTERNATIONAL', 'International Gov.', ''))))) %>% 
-# left_join(select(powerGenerators, c(Account, type)), by = c('Account')) %>%
-# mutate(Audience1 = ifelse(!is.na(type) & is.na(Audience1), type, Audience1)) %>% 
-# mutate(Audience1 = ifelse((grepl(audienceDomainsAccounts[1, 'multilateralDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'multilateralAccounts'], Account)), 'Multilateral Institution',
-#                           ifelse((grepl(audienceDomainsAccounts[1, 'NGODomains'], Domain)|grepl(audienceDomainsAccounts[1, 'NGOAccounts'], Account)), 'NGO',
-#                                  ifelse((grepl(audienceDomainsAccounts[1, 'financialDomains'], Domain)|grepl(audienceDomainsAccounts[1, 'financialAccounts'], Account)), 'Financial Entity', Audience1)))) %>% 
-# mutate(Audience1 = ifelse(grepl('Corporate', AccountType) & (Audience1 == ''|is.na(Audience1)), 'Other Corporate', Audience1),
-#        Audience1 = ifelse(grepl('Foundation', AccountType), 'Foundation', Audience1),
-#        Audience1 = ifelse(grepl('Academic', AccountType) & (Account != '' | is.na(Account) | Account != 'Unknown'), 'Academic', Audience1),
-#        Audience1 = ifelse((is.na(Audience1) | Audience1 == '') & grepl('Foundation', AccountType), 'Foundation', Audience1),
-#        Account = ifelse(is.na(Account), 'Unknown', Account),
-#        Audience1 = ifelse(Account == 'Unknown'|Audience1 == ''|is.na(Audience1), 'N/A', Audience1),
-#        Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1),
-#        Account = ifelse(grepl('RMI', Account), 'Household', Account),
-#        Account = ifelse(Account == 'Unknown' & !is.na(govName), govName, Account),
-#        Account = ifelse(is.na(Account), 'Unknown', Account),
-#        Account = ifelse(grepl('Household', Account), 'Household', Account)) 
-
-
-
-# get list of all reports
-reports <- campaign_list %>% 
-  filter(Type == 'Report') %>% 
-  filter(grepl('^RP', Name)) %>% 
-  filter(Members > 10)
-
-# get list of all events
-events <- campaign_list %>% 
-  filter(grepl('Event|Training|Workshop', Type) & Type != 'Development Event') %>% 
-  filter(Members > 0)
-
-
-###
-
-getFields <- function(object, inlineHelpText = TRUE, calculatedFormula = TRUE) {
-  
-  df_fields <- sf_describe_object_fields(object) %>% 
-    relocate(label, .before = 1) %>% 
-    relocate(name, .after = 1)
-  
-  if(inlineHelpText == TRUE){ df_fields <- df_fields %>% relocate(inlineHelpText, .after = 2) }  
-  
-  if(calculatedFormula == TRUE){ df_fields <- df_fields %>% relocate(calculatedFormula, .after = 3) } 
-  
-  return(df_fields)
-  
-}
-
-listEmailFields <- getFields('ListEmail', calculatedFormula = FALSE, inlineHelpText = FALSE)
-###
-campaignMemberFields <- getFields('CampaignMember', FALSE)
-
-# get campaign members
-my_soql <- sprintf("SELECT Id,
-                           Name,
-                           CreatedDate,
-                           Subject,
-                           HtmlBody,
-                           TextBody,
-                           FromName,
-                           Status,
-                           Type,
-                           HasAttachment,
-                           TotalOpens,
-                           UniqueOpens,
-                           CampaignId,
-                           TotalDelivered,
-                           IsTracked
-
-                      FROM ListEmail
-                      LIMIT 1000")
-
-listEmails <- sf_query(my_soql, 'ListEmail', api_type = "Bulk 1.0") %>% 
-  filter(Status == 'Sent')
-
-
-campaignIdList <- c('7016f0000023VTgAAM')
-
-my_soql <- sprintf("SELECT CampaignId,
-                           Name,
-                           Status,
-                           HasResponded,
-                           ContactId,
-                           LeadId,
-                           CreatedDate,
-                           Account_Name_text__c,
-                           Lifetime_Giving__c
-
-                    FROM CampaignMember
-                    WHERE CampaignId in ('%s')",
-                   paste0(campaignIdList, collapse = "','"))
-
-campaignMembers <- sf_query(my_soql, 'CampaignMember', api_type = "Bulk 1.0") 
-
-ListtEmailIdList <- c('0XB6f000000g5FEGAY')
-
-
-my_soql <- sprintf("SELECT Name,
-                           CreatedDate,
-                           ListEmailId,
-                           RecipientId	
-
-
-                    FROM ListEmailIndividualRecipient
-                    WHERE ListEmailId in ('%s')",
-                   paste0(ListtEmailIdList, collapse = "','"))
-
-liIr <- sf_query(my_soql, 'ListEmailIndividualRecipient', api_type = "Bulk 1.0") 
-
-liIr2 <- liIr %>% 
-  left_join(prospects, by = c('RecipientId' = 'Id'))
