@@ -6,11 +6,12 @@ library(rjson)
 library(jsonlite)
 
 ### Pardot API Token & Request Headers
-token4 <- ###
-token5 <- ###
-businessID <- ###
-header4 <- c("Authorization" = token4, "Pardot-Business-Unit-Id" = businessID)
-header5 <- c("Authorization" = token5, "Pardot-Business-Unit-Id" = businessID)
+pardotTokenV4 <- Sys.getenv("Pardot_TokenV4")
+pardotTokenV5 <- Sys.getenv("Pardot_TokenV5")
+pardotBusinessID <- Sys.getenv("Pardot_Business_ID")
+
+header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardotBusinessID)
+header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
 ### define functions
 

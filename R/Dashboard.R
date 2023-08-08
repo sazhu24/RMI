@@ -96,56 +96,7 @@ pageData <- data.frame(site = campaignPages$site,
                        pageType = '', 
                        metadata = '')
 
-for(i in 1:nrow(pageData)){
-  
-  url <- as.character(pageData[i, 'pageURL'])
-  
-  ## get page titles
-  tryCatch( { 
-    url_tb <- url %>%
-      read_html() %>% 
-      html_nodes('head > title') %>% 
-      html_text() %>% 
-      as.data.frame() %>% 
-      rename(title = 1) 
-    
-    pageData[i, 'pageTitle'] <- url_tb[1, 'title']
-    
-  }, error = function(e){
-    pageData[i, 'pageTitle'] <- NA
-  })
-  
-  ## get page types from metadata
-  if(pageData[i, 'site'] == 'rmi.org'){
-    tryCatch( { 
-      url_tb <- url %>%
-        read_html() %>% 
-        html_nodes('script') %>% 
-        html_text() %>% 
-        as.data.frame() %>% 
-        rename(node = 1) %>% 
-        filter(grepl('schema.org', node)) %>% 
-        mutate(keywords = sub('.*keywords\\"\\:\\[', "", node),
-               keywords = gsub('\\].*', "", keywords))
-      
-      pageData[i, 'metadata'] <- url_tb[2, 'keywords']
-      
-    }, error = function(e){
-      pageData[i, 'metadata'] <- NA
-    })
-  } else {
-    pageData[i, 'metadata'] <- NA
-    pageData[i, 'pageType'] <- 'New Website'
-  }
-  
-}
-
-pageData <- pageData %>% 
-  mutate(pageType = ifelse(grepl('article', tolower(metadata)), 'Article',
-                           ifelse(grepl('report', tolower(metadata)), 'Report', pageType)),
-         icon = ifelse(grepl('article', tolower(metadata)), 4,
-                       ifelse(grepl('report', tolower(metadata)), 1, 5))) %>% 
-  distinct(pageTitle, .keep_all = TRUE)
+pageData <- getPageData(pageData)
 
 ## set page titles
 rmiPages <- pageData %>% filter(site == 'rmi.org')
@@ -167,9 +118,7 @@ geographyTraffic <- getTrafficGeography(rmiPropertyID, pages)
 ## get referrals
 mediaReferrals <- getReferrals(rmiPropertyID, pages)
 
-
-###
-
+### run if new site exists
 if(length(propertyIDs > 1)){
   
   # set property ID for new website
@@ -180,7 +129,7 @@ if(length(propertyIDs > 1)){
   pages <- unique(newSitePages[['pageTitle']])
   
   # get website URL
-  newSiteURL <- unique(otherPages[['site']])
+  newSiteURL <- unique(newSitePages[['site']])
   
   ### get page metrics + acquisition
   pageMetricsNS <- getPageMetrics(sitePropertyID, pages) %>% 
@@ -258,44 +207,8 @@ allEmailStats <- getAllEmailStats()
 ## get newsletter story URLs
 pageURLs <- pageData$pageURL
 
-## filter to grab emails and story URLs
-df1 <- allEmailStats %>%
-  filter(grepl(paste(pageURLs, collapse = '|'), url_1)) %>% 
-  select(c(1:22))
-
-colnames(df1)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
-
-df2 <- allEmailStats %>%
-  filter(grepl(paste(pageURLs, collapse = '|'), url_2)) %>% 
-  select(c(1:18, 23:26))
-
-colnames(df2)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
-
-df3 <- allEmailStats %>%
-  filter(grepl(paste(pageURLs, collapse = '|'), url_3)) %>% 
-  select(c(1:18, 27:30))
-
-colnames(df3)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
-
-# bind 
-allStoryStats <- df1 %>% 
-  rbind(df2) %>% 
-  rbind(df3) %>% 
-  mutate(date = as.Date(date),
-         icon = '',
-         story_title = gsub(' - RMI', '', story_title))
-
-# add icon 
-allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),]
-rownames(allStoryStats) <- NULL
-allStoryStats[, 'icon'] <- as.numeric(rownames(allStoryStats))
-
 # set hasEmail to FALSE if no emails detected
 if(nrow(allStoryStats) == 0) hasEmail <- FALSE else hasEmail <- TRUE
-
-# bind campaign ID
-allStoryStats <- allStoryStats %>% 
-  mutate(dashboardCampaign = campaignID)
 
 # push data
 print('push email stats data')
@@ -401,7 +314,7 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
       rbind(campaignMembersEmail)
   }
   
-  df <- df %>% distinct(Id, CampaignName, .keep_all = TRUE) %>% filter(CampaignName != '2023-02-09: Spark')
+  df <- df %>% distinct(Id, CampaignName, .keep_all = TRUE)
   
   ## get donations attributed to campaigns
   print('get donations')

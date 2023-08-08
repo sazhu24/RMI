@@ -5,6 +5,62 @@
 
 #### GOOGLE ANALYTICS
 
+## get page data
+getPageData <- function(df){
+  
+  for(i in 1:nrow(df)){
+    
+    url <- as.character(df[i, 'pageURL'])
+    
+    ## get page titles
+    tryCatch( { 
+      url_tb <- url %>%
+        read_html() %>% 
+        html_nodes('head > title') %>% 
+        html_text() %>% 
+        as.data.frame() %>% 
+        rename(title = 1) 
+      
+      df[i, 'pageTitle'] <- url_tb[1, 'title']
+      
+    }, error = function(e){
+      df[i, 'pageTitle'] <- NA
+    })
+    
+    ## get page types from metadata
+    if(df[i, 'site'] == 'rmi.org'){
+      tryCatch( { 
+        url_tb <- url %>%
+          read_html() %>% 
+          html_nodes('script') %>% 
+          html_text() %>% 
+          as.data.frame() %>% 
+          rename(node = 1) %>% 
+          filter(grepl('schema.org', node)) %>% 
+          mutate(keywords = sub('.*keywords\\"\\:\\[', "", node),
+                 keywords = gsub('\\].*', "", keywords))
+        
+        df[i, 'metadata'] <- url_tb[2, 'keywords']
+        
+      }, error = function(e){
+        df[i, 'metadata'] <- NA
+      })
+    } else {
+      df[i, 'metadata'] <- NA
+      df[i, 'pageType'] <- 'New Website'
+    }
+    
+  }
+  
+  df <- df %>% 
+    mutate(pageType = ifelse(grepl('article', tolower(metadata)), 'Article',
+                             ifelse(grepl('report', tolower(metadata)), 'Report', pageType)),
+           icon = ifelse(grepl('article', tolower(metadata)), 4,
+                         ifelse(grepl('report', tolower(metadata)), 1, 5))) %>% 
+    distinct(pageTitle, .keep_all = TRUE)
+  
+}
+
 ## get web traffic and key metrics for all pages
 getPageMetrics <- function(propertyID, pages){
   campaignPages <- ga_data(
@@ -175,6 +231,7 @@ getReferrals <- function(propertyID, pages, site = 'rmi.org'){
 
 #### PARDOT / EMAILS
 
+### Email Stats
 
 getAllEmailStats <- function(){
   
@@ -183,9 +240,7 @@ getAllEmailStats <- function(){
     mutate(date = as.Date(date))
   
   # find link on Email Stats spreadsheet
-  emailStatsPEM <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Market Catalyst Stats (Unformatted)') %>% 
-    mutate(name = ifelse(grepl('PEM 2023-07 Finance Newsletter', name), 'PEM 2023-07-09 Finance Newsletter', name),
-           date = as.Date(stringr::str_extract(name, '[0-9]+-[0-9]+-[0-9]+')))
+  emailStatsPEM <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Market Catalyst Stats (Unformatted)') 
   
   allEmailStats <- emailStatsSpark %>% 
     plyr::rbind.fill(emailStatsPEM) %>% 
@@ -195,6 +250,46 @@ getAllEmailStats <- function(){
   return(allEmailStats)
 }
 
+
+getCampaignEmails <- function(pageURLs){
+  
+  ## filter to grab emails and story URLs
+  df1 <- allEmailStats %>%
+    filter(grepl(paste(pageURLs, collapse = '|'), url_1)) %>% 
+    select(c(1:22))
+  
+  colnames(df1)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  df2 <- allEmailStats %>%
+    filter(grepl(paste(pageURLs, collapse = '|'), url_2)) %>% 
+    select(c(1:18, 23:26))
+  
+  colnames(df2)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  df3 <- allEmailStats %>%
+    filter(grepl(paste(pageURLs, collapse = '|'), url_3)) %>% 
+    select(c(1:18, 27:30))
+  
+  colnames(df3)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
+  
+  # bind 
+  allStoryStats <- df1 %>% 
+    rbind(df2) %>% 
+    rbind(df3) %>% 
+    mutate(date = as.Date(date),
+           icon = '',
+           story_title = gsub(' - RMI', '', story_title),
+           dashboardCampaign = campaignID)
+  
+  # add icon 
+  allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),]
+  rownames(allStoryStats) <- NULL
+  allStoryStats[, 'icon'] <- as.numeric(rownames(allStoryStats))
+  
+  return(allStoryStats)
+}
+
+### Email Clicks
 
 ## get email clicks for campaign
 get <- function(url, header) {
