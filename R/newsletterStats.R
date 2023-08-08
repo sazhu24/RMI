@@ -4,7 +4,6 @@ library(rvest)
 library(httr)
 library(rjson)
 library(jsonlite)
-library(salesforcer)
 
 ### Pardot API Token & Request Headers
 token4 <- ###
