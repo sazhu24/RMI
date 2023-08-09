@@ -1,46 +1,23 @@
-library(dplyr)
-library(tidyverse)
-library(xml2)
-library(httr)
-library(rjson)
-library(jsonlite)
-library(lubridate)
-library(openxlsx)
-library(googledrive)
-library(googlesheets4)
-library(googleAnalyticsR)
-library(salesforcer)
-library(rvest)
-library(conflicted)
-library(stringr)
 
-conflicts_prefer(jsonlite::toJSON)
-conflicts_prefer(jsonlite::fromJSON)
-conflicts_prefer(dplyr::filter)
-conflicts_prefer(dplyr::mutate)
-conflicts_prefer(dplyr::group_by)
-conflicts_prefer(dplyr::summarize)
-conflicts_prefer(dplyr::rename)
-
-ss <- 'https://docs.google.com/spreadsheets/d/1GBZl3mUz9DvroeQ77anMtGO4FM0xEnVx4K99Rr6Aw5g/edit#gid=0'
-campaign <- 'Coal v Gas'
+### get packages and functions
+source("packages.R")  
+source("functions.R")  
 
 ### API Authentication + Tokens
 
-# Monday.com Token
+## Monday.com Token
 mondayToken <- Sys.getenv("Monday_Token")
 
-# Sprout Social Token
+## Sprout Social Token
 sproutToken <- Sys.getenv("SproutSocial_Token")
 sproutHeader <- c("Authorization" = sproutToken, "Accept" = "application/json", "Content-Type" = "application/json")
 currentDate <- paste(Sys.Date())
 oneYearAgo <- ymd(currentDate) - years(1)
 
-# Pardot API Token & Request Headers
+## Pardot API Token & Request Headers
 pardotTokenV4 <- Sys.getenv("Pardot_TokenV4")
 pardotTokenV5 <- Sys.getenv("Pardot_TokenV5")
 pardotBusinessID <- Sys.getenv("Pardot_Business_ID")
-
 header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardotBusinessID)
 header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
@@ -53,9 +30,14 @@ ga_auth(email = "sara.zhu@rmi.org")
 
 ## SF Authentication
 sf_auth()
-### CAMPAIGN
 
-## get campaign key
+
+### SET CAMPAIGN
+ss <- 'https://docs.google.com/spreadsheets/d/1GBZl3mUz9DvroeQ77anMtGO4FM0xEnVx4K99Rr6Aw5g/edit#gid=0'
+campaign <- 'Coal v Gas'
+
+
+### READ CAMPAIGN KEY
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
                           sheet = paste0('Campaign Key - ', campaign))
 
@@ -73,8 +55,6 @@ if(nrow(campaignEvents) == 0) hasEvent <- FALSE else hasEvent <- TRUE
 
 socialTag <- as.character(campaignKey[1, c('socialTag')])
 
-### get functions
-source("functions.R")  
 
 ##### WEB
 print('GET GOOGLE ANALYTICS DATA')
@@ -235,7 +215,7 @@ print('push email stats data')
 write_sheet(campaignNewsletters, ss = ss, sheet = 'Newsletter Stats')
 
 
-### SALESFORCE
+#### SALESFORCE
 print('GET SALESFORCE DATA')
 
 getSalesforceData()
@@ -293,7 +273,8 @@ print('push social media data')
 write_sheet(campaignPosts, ss = ss, sheet = 'Social - Campaign')
 
 
-##### Monday.com
+#### Monday.com
+
 print('GET MONDAY.COM DATA')
 
 # get Active Projects Board
@@ -316,9 +297,7 @@ for(i in 1:nrow(activeProjects)){
 
 names(campaigns) <- c('id', 'row', 'name')
 
-# filter to identify campaign of interest
-print('find target campaign and dashboard columns')
-
+# filter to find campaign
 targetCampaign <- campaigns %>% 
   filter(grepl('Coal v Gas', name))
 
