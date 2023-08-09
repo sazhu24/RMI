@@ -37,10 +37,6 @@ currentDate <- paste(Sys.Date())
 oneYearAgo <- ymd(currentDate) - years(1)
 
 # Pardot API Token & Request Headers
-pardotTokenV4 <-  "Bearer 00DU0000000HJDy!ARAAQMfVVK3WXg282pTB6xbUeBAP2ROlEqyCtkWm_HxlgT9XkH6A.s78aqi06XwVBkOIltNqyvSQf2K0SNcuPiMGdPJIIj.x"
-pardotTokenV5 <-  "Bearer 00DU0000000HJDy!ARAAQHQWuMzP7ESLJGb9lFpUAZBgkgFeq8bPdHR_jV66_g_7ipulZfo_l5QpR_wPZlOasb_82tE8s0NgA0HouBw3Qjdi8heC"
-pardotBusinessID <-  "0Uv0B000000XZDkSAO"
-
 pardotTokenV4 <- Sys.getenv("Pardot_TokenV4")
 pardotTokenV5 <- Sys.getenv("Pardot_TokenV5")
 pardotBusinessID <- Sys.getenv("Pardot_Business_ID")
@@ -55,7 +51,7 @@ gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 ## GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
 
-##
+## SF Authentication
 sf_auth()
 ### CAMPAIGN
 
