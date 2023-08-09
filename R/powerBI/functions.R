@@ -664,28 +664,34 @@ getDonations <- function(){
 ### get campaign member data for reports (SF), events (SF), and email clicks (Pardot)
 getSalesforceData <- function(){
   
+  ## create dataframe for campaigns
+  df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
+  names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
+                 'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
+                 'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
+  
   ## only run if at least 1 campaign exists
   if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
     
-    ## get list of campaigns
-    campaignList <- getCampaignList()
-    
-    ## get all accounts
-    all_accounts <- getAllAccounts() 
-    
-    ## get domain info for gov accounts
-    domainKey <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/domainKey.xlsx') 
-    
-    ## get audience domains and accounts
-    audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
-    audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
-    audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
-    
-    ## create dataframe for campaigns
-    df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
-    names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
-                   'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
-                   'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
+    # ## get list of campaigns
+    # campaignList <- getCampaignList()
+    # 
+    # ## get all accounts
+    # all_accounts <- getAllAccounts() 
+    # 
+    # ## get domain info for gov accounts
+    # domainKey <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/domainKey.xlsx') 
+    # 
+    # ## get audience domains and accounts
+    # audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
+    # audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
+    # audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
+    # 
+    # ## create dataframe for campaigns
+    # df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
+    # names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
+    #                'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
+    #                'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
     
     if(hasReport == TRUE){
       
@@ -756,9 +762,17 @@ getSalesforceData <- function(){
     
     df <- df %>% distinct(Id, CampaignName, .keep_all = TRUE)
     
-    ## get donations attributed to campaigns
-    print('get donations')
-    
+    return(df)
+  } else {
+    return(df)
+  }
+}
+
+getDonationsDF <- function(df){
+  ## get donations attributed to campaigns
+  print('get donations')
+  
+  if(nrow(df) > 0){
     donors <- df %>% 
       select(Pardot_ID, Name, DonorType, EngagementType, CampaignName, EngagementDate, Id, Pardot_Score, TotalGiving, Account) %>% 
       distinct() %>% 
@@ -788,30 +802,69 @@ getSalesforceData <- function(){
       filter(AttributtedValue > 0) %>% 
       select(-TimeDifferenceAdjusted) 
     
-    oppsByProspect <- donations %>% 
-      group_by(Id, CampaignName) %>% 
-      summarize(AttributtedDonationValue = sum(AttributtedValue))
-    
-    # bind donations and clean dataframe
-    final <- df %>% 
-      left_join(oppsByProspect) %>% 
-      select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
-             DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
-             Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
-             LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
-    
-    # push data
-    print('push salesforce data')
-    
-    ALL_SALESFORCE <- pushData(final, 'Salesforce')
-    ALL_DONATIONS <- pushData(donations, 'SF Donations')
-    #write_sheet(final, ss = ss, sheet = 'Salesforce')
-    #write_sheet(donations, ss = ss, sheet = 'SF Donations')
-    
+    return(donations)
   } else {
-    print('there are no reports, events, or emails in this campaaign')
+    return( NA )
   }
+  
 }
+#     ## get donations attributed to campaigns
+#     print('get donations')
+#     
+#     donors <- df %>% 
+#       select(Pardot_ID, Name, DonorType, EngagementType, CampaignName, EngagementDate, Id, Pardot_Score, TotalGiving, Account) %>% 
+#       distinct() %>% 
+#       filter(!is.na(DonorType))
+#     
+#     print('get donations')
+#     allOpps <- getDonations() 
+#     
+#     # select donations made after campaign
+#     donations <- allOpps %>% 
+#       filter(DonationDate > EngagementDate)
+#     
+#     uniqueDonations <- donations %>% 
+#       dplyr::group_by(DonationId) %>% 
+#       dplyr::summarize(count = n())
+#     
+#     donations <- donations %>% 
+#       # calculate attributed donation value
+#       mutate(DonationValue = as.numeric(DonationValue),
+#              TimeDifference = difftime(DonationDate, EngagementDate, units = "days"),
+#              TimeDifference = as.numeric(gsub("[^0-9.-]", "", TimeDifference)),
+#              TimeDifferenceAdjusted = ifelse(TimeDifference < 31, 1, TimeDifference),
+#              AttributtedValue = ifelse(DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)) < 0, 0, DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)))) %>% 
+#       relocate(DonationValue, .before = AttributtedValue) %>%  
+#       left_join(uniqueDonations) %>% 
+#       mutate(AttributtedValue = round(AttributtedValue/count, 1)) %>% 
+#       filter(AttributtedValue > 0) %>% 
+#       select(-TimeDifferenceAdjusted) 
+#     
+#     oppsByProspect <- donations %>% 
+#       group_by(Id, CampaignName) %>% 
+#       summarize(AttributtedDonationValue = sum(AttributtedValue))
+#     
+#     # bind donations and clean dataframe
+#     final <- df %>% 
+#       left_join(oppsByProspect) %>% 
+#       select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
+#              DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
+#              Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
+#              LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
+#     
+#     # push data
+#     print('push salesforce data')
+#     
+#     ALL_SALESFORCE <- pushData(final, 'Salesforce')
+#     ALL_DONATIONS <- pushData(donations, 'SF Donations')
+#     #write_sheet(final, ss = ss, sheet = 'Salesforce')
+#     #write_sheet(donations, ss = ss, sheet = 'SF Donations')
+#     return(final)
+#     
+#   } else {
+#     print('there are no reports, events, or emails in this campaaign')
+#   }
+# }
 
 
 #### SPROUT SOCIAL
@@ -1066,13 +1119,25 @@ getMondayCall <- function(x) {
 ###
 pushData <- function(df, sheetName){
   
-  df <- df %>% mutate(CAMPAIGN_ID = campaignID)
+  # bind campaign ID
+  df <- df %>% 
+    mutate(CAMPAIGN_ID = campaignID) %>% 
+    relocate(CAMPAIGN_ID, .before = 1)
   
   tryCatch({ 
+    
     existingData <- read_sheet(ss = ss, sheet = sheetName) %>% 
       rbind(df)
-    write_sheet(existingData, ss = ss, sheet = sheetName) 
-    return(df)
+    
+    if(mode == 'development'){
+      write_sheet(df, ss = ss, sheet = sheetName) 
+      return(df)
+    } else {
+      write_sheet(existingData, ss = ss, sheet = sheetName) 
+      return(existingData)
+    }
+    
+    
   }, error = function(e) { 
     write_sheet(df, ss = ss, sheet = sheetName) 
     return(df) 

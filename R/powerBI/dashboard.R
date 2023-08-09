@@ -1,7 +1,11 @@
 
 ### get packages and functions
-source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
-source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
+source("packages.R")  
+source("functions.R")  
+
+### SET CAMPAIGN
+# current options are 1. OCI 2. Coal v Gas
+campaign <- 'OCI'
 
 ### API Authentication + Tokens
 
@@ -31,11 +35,12 @@ ga_auth(email = "sara.zhu@rmi.org")
 ## SF Authentication
 sf_auth()
 
-
-### SET CAMPAIGN
+## set google sheet
 ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo4bxg6TI7DU/edit?usp=sharing'
-campaign <- 'OCI'
 
+## standard mode binds data to existing rows
+## development mode overwrites all data in sheet
+mode <- 'standard'
 
 ### READ CAMPAIGN KEY
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
@@ -133,7 +138,8 @@ if(length(propertyIDs) > 1){
     pivot_longer(cols = c(Sessions:'Form Submissions'), names_to = "type", values_to = "count") %>% 
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
-    mutate(totalPageViews = round(screenPageViews/6, 0)) %>% 
+    mutate(totalPageViews = round(screenPageViews/6, 0),
+           count = ifelse(is.na(count), 0, count)) %>% 
     filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
   
   ### get social
@@ -166,19 +172,12 @@ if(length(propertyIDs) > 1){
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
     mutate(totalPageViews = round(screenPageViews/6, 0),
-           count = ifelse(is.na(count), 0)) %>% 
+           count = ifelse(is.na(count), 0, count)) %>% 
     filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
 }
 
 
-# # push google analytics data
-# print('push google analytics data')
-# 
-# write_sheet(allTraffic, ss = ss, sheet = 'Web Traffic - All')
-# write_sheet(socialTraffic, ss = ss, sheet = 'Web Traffic - Social')
-# write_sheet(geographyTraffic, ss = ss, sheet = 'Web Traffic - Geography')
-# write_sheet(mediaReferrals, ss = ss, sheet = 'Web Traffic - Referrals')
-
+## push google analytics data
 
 ALL_WEB_TRAFFIC <- pushData(allTraffic, 'Web Traffic - All')
 ALL_WEB_SOCIAL <- pushData(socialTraffic, 'Web Traffic - Social')
@@ -206,13 +205,48 @@ print('push email stats data')
 
 ALL_NEWSLETTERS <- pushData(campaignNewsletters, 'Newsletters')
 
-#write_sheet(campaignNewsletters, ss = ss, sheet = 'Newsletters')
-
 
 #### SALESFORCE
 print('GET SALESFORCE DATA')
 
-getSalesforceData()
+if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
+  
+  ## get list of campaigns
+  campaignList <- getCampaignList()
+  
+  ## get all accounts
+  all_accounts <- getAllAccounts() 
+  
+  ## get domain info for gov accounts
+  domainKey <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/domainKey.xlsx') 
+  
+  ## get audience domains and accounts
+  audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
+  audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
+  audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
+}
+
+final <- getSalesforceData()
+donations <- getDonationsDF(final)
+
+# bind donations to SF campaign data
+oppsByProspect <- donations %>% 
+  group_by(Id, CampaignName) %>% 
+  summarize(AttributtedDonationValue = sum(AttributtedValue))
+
+final <- final %>% 
+  left_join(oppsByProspect) %>% 
+  select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
+         DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
+         Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
+         LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
+
+# push data
+print('push salesforce data')
+
+ALL_SALESFORCE <- pushData(final, 'Salesforce')
+ALL_DONATIONS <- pushData(donations, 'SF Donations')
+
 
 
 ##### SOCIAL MEDIA
@@ -265,7 +299,6 @@ campaignPosts <- taggedPosts %>%
 print('push social media data')
 
 ALL_SOCIAL_POSTS <- pushData(final, 'Social Media Posts')
-#write_sheet(campaignPosts, ss = ss, sheet = 'Social Media Posts')
 
 #### Monday.com
 
@@ -304,10 +337,31 @@ campaignDF <- data.frame(ID = campaignBoard[16, 'text'],
 
 # push data
 print('push monday.com data')
+
 ALL_MONDAY <- pushData(final, 'Campaign Overview')
 
-#write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')
 
-####
+##### CREATE CONTENT SUMMARY
+
+social <- campaignPosts %>% 
+  mutate(type = 'Social Media Posts') %>% 
+  select(type, name = post_type) 
+
+salesforce <- final %>% 
+  select(name = CampaignName, EngagementType) %>% 
+  distinct() %>% 
+  mutate(type = ifelse(EngagementType == 'Newsletter Click', 'Newsletters', 
+                       ifelse(EngagementType == 'Report Download', 'Reports', 
+                              ifelse(EngagementType == 'Event', 'Events', '')))) %>% 
+  select(type, name)
+
+media <- mediaReferrals %>% 
+  mutate(type = 'Media Referrals') %>% 
+  ungroup() %>% 
+  select(type, name = mediaSubtype) 
+
+contentSummary <- social %>% rbind(salesforce) %>% rbind(media)
+
+ALL_CONTENT_SUMMARY <- pushData(contentSummary, 'Content Summary')
 
 
