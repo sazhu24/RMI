@@ -1,7 +1,7 @@
 
 ### get packages and functions
-source("packages.R")  
-source("functions.R")  
+source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
+source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
 ### API Authentication + Tokens
 
@@ -33,8 +33,8 @@ sf_auth()
 
 
 ### SET CAMPAIGN
-ss <- 'https://docs.google.com/spreadsheets/d/1GBZl3mUz9DvroeQ77anMtGO4FM0xEnVx4K99Rr6Aw5g/edit#gid=0'
-campaign <- 'Coal v Gas'
+ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo4bxg6TI7DU/edit?usp=sharing'
+campaign <- 'OCI'
 
 
 ### READ CAMPAIGN KEY
@@ -133,10 +133,8 @@ if(length(propertyIDs) > 1){
     pivot_longer(cols = c(Sessions:'Form Submissions'), names_to = "type", values_to = "count") %>% 
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
-    mutate(totalPageViews = totalPageViews,
-           dashboardCampaign = campaignID) %>% 
-    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) %>% 
-    filter(!is.na(count))
+    mutate(totalPageViews = round(screenPageViews/6, 0)) %>% 
+    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
   
   ### get social
   socialTrafficNS <- getTrafficSocial(sitePropertyID, pages, site = newSiteURL) 
@@ -167,31 +165,25 @@ if(length(propertyIDs) > 1){
     pivot_longer(cols = c(Sessions:'Form Submissions'), names_to = "type", values_to = "count") %>% 
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
-    mutate(totalPageViews = totalPageViews,
-           dashboardCampaign = campaignID) %>% 
-    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) %>% 
-    filter(!is.na(count))
+    mutate(totalPageViews = round(screenPageViews/6, 0),
+           count = ifelse(is.na(count), 0)) %>% 
+    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
 }
 
-allTraffic <- allTraffic %>% 
-  mutate(dashboardCampaign = campaignID)
 
-socialTraffic <- socialTraffic %>% 
-  mutate(dashboardCampaign = campaignID)
+# # push google analytics data
+# print('push google analytics data')
+# 
+# write_sheet(allTraffic, ss = ss, sheet = 'Web Traffic - All')
+# write_sheet(socialTraffic, ss = ss, sheet = 'Web Traffic - Social')
+# write_sheet(geographyTraffic, ss = ss, sheet = 'Web Traffic - Geography')
+# write_sheet(mediaReferrals, ss = ss, sheet = 'Web Traffic - Referrals')
 
-geographyTraffic <- geographyTraffic %>% 
-  mutate(dashboardCampaign = campaignID)
 
-mediaReferrals <- mediaReferrals %>% 
-  mutate(dashboardCampaign = campaignID)
-
-# push google analytics data
-print('push google analytics data')
-
-write_sheet(allTraffic, ss = ss, sheet = 'Web Traffic - All')
-write_sheet(socialTraffic, ss = ss, sheet = 'Web Traffic - Social')
-write_sheet(geographyTraffic, ss = ss, sheet = 'Web Traffic - Geography')
-write_sheet(mediaReferrals, ss = ss, sheet = 'Web Traffic - Referrals')
+ALL_WEB_TRAFFIC <- pushData(allTraffic, 'Web Traffic - All')
+ALL_WEB_SOCIAL <- pushData(socialTraffic, 'Web Traffic - Social')
+ALL_WEB_GEO <- pushData(geographyTraffic, 'Web Traffic - Geography')
+ALL_WEB_REFERRALS <- pushData(mediaReferrals, 'Web Traffic - Referrals')
 
 
 ##### EMAIL NEWSLETTERS 
@@ -212,7 +204,9 @@ if(nrow(campaignNewsletters) == 0) hasEmail <- FALSE else hasEmail <- TRUE
 # push data
 print('push email stats data')
 
-write_sheet(campaignNewsletters, ss = ss, sheet = 'Newsletter Stats')
+ALL_NEWSLETTERS <- pushData(campaignNewsletters, 'Newsletters')
+
+#write_sheet(campaignNewsletters, ss = ss, sheet = 'Newsletters')
 
 
 #### SALESFORCE
@@ -270,8 +264,8 @@ campaignPosts <- taggedPosts %>%
 # push data
 print('push social media data')
 
-write_sheet(campaignPosts, ss = ss, sheet = 'Social - Campaign')
-
+ALL_SOCIAL_POSTS <- pushData(final, 'Social Media Posts')
+#write_sheet(campaignPosts, ss = ss, sheet = 'Social Media Posts')
 
 #### Monday.com
 
@@ -306,12 +300,14 @@ campaignRow <- as.numeric(targetCampaign[1, 'row'])
 campaignBoard <- activeProjects[[3]][[campaignRow]]
 campaignDF <- data.frame(ID = campaignBoard[16, 'text'], 
                          audiences = campaignBoard[15, 'text'], 
-                         metrics = campaignBoard[11, 'text']) %>% 
-  mutate(dashboardCampaign = campaignID)
+                         metrics = campaignBoard[11, 'text']) 
 
 # push data
 print('push monday.com data')
+ALL_MONDAY <- pushData(final, 'Campaign Overview')
 
-write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')
+#write_sheet(campaignDF, ss = ss, sheet = 'Campaign Overview')
+
+####
 
 

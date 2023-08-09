@@ -244,7 +244,8 @@ getAllEmailStats <- function(){
   
   allEmailStats <- emailStatsSpark %>% 
     plyr::rbind.fill(emailStatsPEM) %>% 
-    mutate(name = ifelse(grepl('Spark', name), paste0(date, ': Spark'), paste0(date, ':', sub('(.*)-[0-9]{2}', '', name))),
+    mutate(date = as.Date(date),
+           name = ifelse(grepl('Spark', name), paste0(date, ': Spark'), paste0(date, ':', sub('(.*)-[0-9]{2}', '', name))),
            id = as.numeric(id))
   
   return(allEmailStats)
@@ -277,14 +278,12 @@ getCampaignEmails <- function(pageURLs){
     rbind(df2) %>% 
     rbind(df3) %>% 
     mutate(date = as.Date(date),
-           icon = '',
-           story_title = gsub(' - RMI', '', story_title),
-           dashboardCampaign = campaignID)
+           story_title = gsub(' - RMI', '', story_title))
   
   # add icon 
-  allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),]
-  rownames(allStoryStats) <- NULL
-  allStoryStats[, 'icon'] <- as.numeric(rownames(allStoryStats))
+  allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),] %>% 
+    select(id, name, date, delivered_ = delivered, unique_opens, open_rate, unique_clicks,
+           unique_CTR, UCTRvsAvg, story_url, story_title, story_clicks, story_COR)
   
   return(allStoryStats)
 }
@@ -787,8 +786,7 @@ getSalesforceData <- function(){
       left_join(uniqueDonations) %>% 
       mutate(AttributtedValue = round(AttributtedValue/count, 1)) %>% 
       filter(AttributtedValue > 0) %>% 
-      select(-TimeDifferenceAdjusted) %>% 
-      mutate(dashboardCampaign = campaignID)
+      select(-TimeDifferenceAdjusted) 
     
     oppsByProspect <- donations %>% 
       group_by(Id, CampaignName) %>% 
@@ -800,15 +798,15 @@ getSalesforceData <- function(){
       select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
              DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
              Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
-             LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) %>% 
-      # bind campaign ID
-      mutate(dashboardCampaign = campaignID)
+             LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
     
     # push data
     print('push salesforce data')
     
-    write_sheet(final, ss = ss, sheet = 'Salesforce - All')
-    write_sheet(donations, ss = ss, sheet = 'Salesforce - Donations')
+    ALL_SALESFORCE <- pushData(final, 'Salesforce')
+    ALL_DONATIONS <- pushData(donations, 'SF Donations')
+    #write_sheet(final, ss = ss, sheet = 'Salesforce')
+    #write_sheet(donations, ss = ss, sheet = 'SF Donations')
     
   } else {
     print('there are no reports, events, or emails in this campaaign')
@@ -1063,6 +1061,23 @@ getMondayCall <- function(x) {
                   add_headers(Authorization = mondayToken)
   )
   return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
+}
+
+###
+pushData <- function(df, sheetName){
+  
+  df <- df %>% mutate(CAMPAIGN_ID = campaignID)
+  
+  tryCatch({ 
+    existingData <- read_sheet(ss = ss, sheet = sheetName) %>% 
+      rbind(df)
+    write_sheet(existingData, ss = ss, sheet = sheetName) 
+    return(df)
+  }, error = function(e) { 
+    write_sheet(df, ss = ss, sheet = sheetName) 
+    return(df) 
+  })
+  
 }
 
 
