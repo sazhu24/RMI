@@ -1,7 +1,7 @@
 
 ### get packages and functions
-source("packages.R")  
-source("functions.R")  
+source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
+source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
 ### SET CAMPAIGN
 
@@ -27,8 +27,8 @@ header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardot
 header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
 ## Google Authentication
-#options(gargle_oauth_cache = ".secrets")
-#gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
+# options(gargle_oauth_cache = ".secrets")
+# gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 
 ## GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
@@ -39,8 +39,9 @@ sf_auth()
 ## set google sheet
 ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo4bxg6TI7DU/edit?usp=sharing'
 
-## standard mode binds data to existing rows
-## development mode overwrites all data in sheet
+## set mode
+# standard mode binds data to existing rows
+# development mode overwrites all data in sheet
 mode <- 'development'
 
 ### READ CAMPAIGN KEY
