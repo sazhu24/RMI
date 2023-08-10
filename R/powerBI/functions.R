@@ -20,18 +20,15 @@ pushData <- function(df, sheetName){
     ## if development mode is on, overwrite data in sheet
     if(mode == 'development'){
       write_sheet(df, ss = ss, sheet = sheetName) 
-      #write.xlsx(df, '/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/dataset.xlsx', sheetName = sheetName, append = TRUE)
       return(df)
     } else {
       write_sheet(existingData, ss = ss, sheet = sheetName) 
-      #write.xlsx(existingData, '/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/dataset.xlsx', sheetName = sheetName, append = TRUE)
       return(existingData)
     }
     
     ## catch error when the sheet does not already exist
   }, error = function(e) { 
     write_sheet(df, ss = ss, sheet = sheetName) 
-    #write.xlsx(df, '/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/dataset.xlsx', sheetName = sheetName, append = TRUE)
 
     return(df) 
   })
@@ -683,7 +680,7 @@ cleanCampaignDF <- function(df){
       Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1)
     ) %>% 
     # create True or False columns for each of the following variables to make 
-    # data maniuplation easier on Power BI
+    # data manipulation easier on Power BI
     mutate(DownloadTF = ifelse(grepl('Download', EngagementType), 1, NA),
            EventTF = ifelse(grepl('Attended', Status), 1, NA),
            EmailClickTF = ifelse(grepl('Click', EngagementType), 1, NA),
@@ -1063,7 +1060,7 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   return(posts)
 }
 
-## get LinkedIn posts from program accounts (all non-brand accounts)
+## get LinkedIn posts from program LinkedIn accounts 
 getPosts <- function(ids, type){
   
   APT <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
