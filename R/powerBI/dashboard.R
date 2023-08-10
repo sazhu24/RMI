@@ -1,5 +1,5 @@
 
-### get packages and functions
+### GET PACKAGES AND FUNCTIONS
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
@@ -27,8 +27,8 @@ header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardot
 header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
 ## Google Authentication
-# options(gargle_oauth_cache = ".secrets")
-# gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
+options(gargle_oauth_cache = ".secrets")
+gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 
 ## GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
@@ -44,7 +44,7 @@ ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo
 # development mode overwrites all data in sheet
 mode <- 'development'
 
-### READ CAMPAIGN KEY
+#### READ CAMPAIGN KEY ####
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
                           sheet = paste0('Campaign Key - ', campaign))
 
@@ -63,8 +63,8 @@ if(nrow(campaignEvents) == 0) hasEvent <- FALSE else hasEvent <- TRUE
 socialTag <- as.character(campaignKey[1, c('socialTag')])
 
 
-##### WEB
-print('GET GOOGLE ANALYTICS DATA')
+##### WEB ####
+message('GETTING GOOGLE ANALYTICS DATA')
 
 ### set GA variables and property ID
 rmiPropertyID <- 354053620
@@ -176,7 +176,8 @@ if(length(propertyIDs) > 1){
 }
 
 
-## push google analytics data
+# push data
+message('pushing google analytics data')
 
 ALL_WEB_TRAFFIC <- pushData(allTraffic, 'Web Traffic - All')
 ALL_WEB_SOCIAL <- pushData(socialTraffic, 'Web Traffic - Social')
@@ -184,31 +185,40 @@ ALL_WEB_GEO <- pushData(geographyTraffic, 'Web Traffic - Geography')
 ALL_WEB_REFERRALS <- pushData(mediaReferrals, 'Web Traffic - Referrals')
 
 
-##### EMAIL NEWSLETTERS 
-print('GET EMAIL DATA')
+##### EMAIL NEWSLETTERS ####
+message('GETTING NEWSLETTERS DATA')
 
-## get all email stats 
+# get all email stats 
 allEmailStats <- getAllEmailStats()
 
-## get newsletter story URLs
+# get newsletter story URLs
 pageURLs <- pageData$pageURL
 
-## get newsletter stories that match page URLS
+# get newsletter stories that match page URLS
 campaignNewsletters <- getCampaignEmails(pageURLs)
 
 # set hasEmail to FALSE if no emails detected
 if(nrow(campaignNewsletters) == 0) hasEmail <- FALSE else hasEmail <- TRUE
 
-## push data
-print('push email stats data')
+if(hasEmail == TRUE){
+  # push data
+  message('pushing newsletter data')
+  
+  ALL_NEWSLETTERS <- pushData(campaignNewsletters, 'Newsletters')
+}
 
-ALL_NEWSLETTERS <- pushData(campaignNewsletters, 'Newsletters')
 
 
-#### SALESFORCE
-print('GET SALESFORCE DATA')
+#### SALESFORCE ####
+message('GETTING SALESFORCE DATA')
 
 if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
+  
+  ## create dataframe for campaigns
+  df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
+  names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
+                 'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
+                 'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
   
   ## get list of campaigns
   campaignList <- getCampaignList()
@@ -227,33 +237,57 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
   audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
   audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
   audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
+
+  ## get campaign member data for reports (SF), events (SF), and email clicks (Pardot)
+  if(hasReport == TRUE){
+    campaignMembersReports <- getSalesforceReports()
+    df <- df %>% 
+      rbind(campaignMembersReports)
+  } 
+  
+  if(hasEvent == TRUE) {
+    campaignMembersEvents <- getSalesforceEvents()
+    df <- df %>% 
+      rbind(campaignMembersEvents)
+  } 
+  
+  if(hasEmail == TRUE) {
+    campaignMembersNewsletters <- getCampaignNewsletters()
+    df <- df %>% 
+      rbind(campaignMembersNewsletters)
+  }
+  
+  # remove duplicates
+  SFcampaigns <- df %>% distinct(Id, CampaignName, .keep_all = TRUE)
+
+  # get donation revenue attributed to these campaign components
+  donations <- getAttributedDonationValue(SFcampaigns)
+  
+  # bind donations to SF campaign data
+  donationsByCampaignMember <- donations %>% 
+    group_by(Id, CampaignName) %>% 
+    summarize(AttributtedDonationValue = sum(AttributtedValue))
+  
+  SFcampaigns <- SFcampaigns %>% 
+    left_join(donationsByCampaignMember) %>% 
+    select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
+           DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
+           Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
+           LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
 }
 
-final <- getSalesforceData()
-donations <- getDonationsDF(final)
 
-# bind donations to SF campaign data
-oppsByProspect <- donations %>% 
-  group_by(Id, CampaignName) %>% 
-  summarize(AttributtedDonationValue = sum(AttributtedValue))
-
-final <- final %>% 
-  left_join(oppsByProspect) %>% 
-  select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
-         DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
-         Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
-         LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
 
 # push data
-print('push salesforce data')
+message('pushing salesforce data')
 
-ALL_SALESFORCE <- pushData(final, 'Salesforce')
+ALL_SALESFORCE <- pushData(SFcampaigns, 'Salesforce')
 ALL_DONATIONS <- pushData(donations, 'SF Donations')
 
 
 
-##### SOCIAL MEDIA
-print('GET SOCIAL MEDIA DATA')
+#### SOCIAL MEDIA ####
+message('GETTING SOCIAL MEDIA DATA')
 
 # get profile IDs
 # profile IDs are specific to an account (e.g. RMI Brand LinkedIn, RMI Buildings Twitter)
@@ -286,29 +320,31 @@ posts1YRaverage <- getPostAverages()
 
 # find tagged posts by applying filter to all posts 
 campaignPosts <- taggedPosts %>% 
-  filter(id == tagID) %>% 
-  #filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
+  #filter(tag_id == tagID) %>% 
+  filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
   distinct(perma_link, .keep_all = TRUE) %>% 
   # calculate post performance compared to avgs.
   left_join(posts1YRaverage, by = c('post_type', 'account')) %>% 
-  mutate(impressionsVavg= round((impressions - impressionsAVG)/impressionsAVG, 3),
+  mutate(impressionsVavg = round((impressions - impressionsAVG)/impressionsAVG, 3),
+         engagementsVavg = round((engagements - engagementsAVG)/engagementsAVG, 3),
          engrtVavg = round((engagementRate - engrtAVG)/engrtAVG, 3),
          brand = ifelse(grepl('RMI Brand', account), 1, 0),
          program = ifelse(brand == 1, 0, 1),
-         accountType = ifelse(brand == 1, 'Brand', 'Program'),
+         accountType = ifelse(brand == 1, 'RMI Brand', 'RMI Program'),
          post = 'Post') %>% 
-  select(-c(impressionsAVG, engagementsAVG, engrtAVG)) %>% 
+  #select(-c(impressionsAVG, engagementsAVG, engrtAVG)) %>% 
   relocate(perma_link, .after = post) %>% 
-  relocate(text, .after = perma_link) 
+  relocate(text, .after = perma_link) %>% 
+  relocate(tag_name, .after = tag_id) 
 
 # push data
-print('push social media data')
+message('pushing social media data')
 
 ALL_SOCIAL_POSTS <- pushData(campaignPosts, 'Social Media Posts')
 
-#### Monday.com
 
-print('GET MONDAY.COM DATA')
+#### Monday.com ####
+message('GETTING MONDAY.COM DATA')
 
 # get Active Projects Board
 query <- "query { boards (ids: 2208962537) { items { id name column_values{ id value text } } } } "
@@ -316,8 +352,6 @@ res <- getMondayCall(query)
 activeProjects <- as.data.frame(res[["data"]][["boards"]][["items"]][[1]])
 
 # iterate through APB to find projects with "Metrics Dashboard" in the promotion tactics column
-print('find Metrics Dashboard projects')
-
 campaigns <- data.frame(id = '', row = '', name = '')[0,]
 for(i in 1:nrow(activeProjects)){
   
@@ -334,17 +368,33 @@ names(campaigns) <- c('id', 'row', 'name')
 targetCampaign <- campaigns %>% 
   filter(grepl('Coal v Gas', name))
 
-# get metrics, audiences, and ID
-campaignRow <- as.numeric(targetCampaign[1, 'row'])
-campaignBoard <- activeProjects[[3]][[campaignRow]]
-campaignDF <- data.frame(ID = campaignBoard[16, 'text'], 
-                         audiences = campaignBoard[15, 'text'], 
-                         metrics = campaignBoard[11, 'text']) 
+for(i in 1:nrow(campaigns)){
+  
+  metricsDashboardCampaigns <- data.frame(CAMPAIGN_ID = '', ID = '', audiences = '', promotionTactics = '')[0,]
+  
+  # get promotion tactics, audiences, and ID
+  campaignRow <- as.numeric(targetCampaign[1, 'row'])
+  campaignBoard <- activeProjects[[3]][[campaignRow]]
+  campaignDF <- data.frame(CAMPAIGN_ID = campaignID,
+                           ID = campaignBoard[16, 'text'], 
+                           audiences = campaignBoard[15, 'text'], 
+                           promotionTactics = campaignBoard[11, 'text']) 
+  
+  metricsDashboardCampaigns <- metricsDashboardCampaigns %>% rbind(campaignDF)
+  
+}
+
+metricsDashboardCampaigns <- metricsDashboardCampaigns %>% 
+  mutate(promotionTactics = gsub(', Metrics Dashboard', '', promotionTactics))
+
+# filter by campaign ID
+targetCampaign <- metricsDashboardCampaigns %>% 
+  filter(CAMPAIGN_ID == campaignID)
 
 # push data
-print('push monday.com data')
+message('pushing monday.com data')
 
-ALL_MONDAY <- pushData(campaignDF, 'Campaign Overview')
+ALL_MONDAY <- pushData(targetCampaign, 'Campaign Overview')
 
 
 ##### CREATE CONTENT SUMMARY #####
@@ -353,7 +403,7 @@ socialContent <- campaignPosts %>%
   mutate(type = 'Social Media Posts') %>% 
   select(type, name = post_type) 
 
-salesforceContent <- final %>% 
+salesforceContent <- SFcampaigns %>% 
   select(name = CampaignName, EngagementType) %>% 
   distinct() %>% 
   mutate(type = ifelse(EngagementType == 'Newsletter', 'Newsletters', 
@@ -370,6 +420,7 @@ contentSummary <- socialContent %>%
   rbind(salesforceContent) %>% 
   rbind(mediaContent)
 
+message('pushing content summary data')
 ALL_CONTENT_SUMMARY <- pushData(contentSummary, 'Content Summary')
 
 
