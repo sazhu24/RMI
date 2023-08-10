@@ -3,9 +3,40 @@
 # FUNCTIONS #
 #############
 
-#### GOOGLE ANALYTICS
+## function that 1. binds the Campaign ID to all final dataframes and 2. pushes the data to a google sheet
+## if data already exists in sheet, df is bound to existing data and pushed
+pushData <- function(df, sheetName){
+  
+  # bind campaign ID
+  df <- df %>% 
+    mutate(CAMPAIGN_ID = campaignID) %>% 
+    relocate(CAMPAIGN_ID, .before = 1)
+  
+  tryCatch({ 
+    
+    existingData <- read_sheet(ss = ss, sheet = sheetName) %>% 
+      rbind(df)
+    
+    ## if development mode is on, overwrite data in sheet
+    if(mode == 'development'){
+      write_sheet(df, ss = ss, sheet = sheetName) 
+      return(df)
+    } else {
+      write_sheet(existingData, ss = ss, sheet = sheetName) 
+      return(existingData)
+    }
+    
+    ## catch error when the sheet does not already exist
+  }, error = function(e) { 
+    write_sheet(df, ss = ss, sheet = sheetName) 
+    return(df) 
+  })
+  
+}
 
-## get page data
+#### GOOGLE ANALYTICS ####
+
+## get page title and content type by web scraping page URLs
 getPageData <- function(df){
   
   for(i in 1:nrow(df)){
@@ -27,7 +58,7 @@ getPageData <- function(df){
       df[i, 'pageTitle'] <- NA
     })
     
-    ## get page types from metadata
+    ## get contet type from page metadata
     if(df[i, 'site'] == 'rmi.org'){
       tryCatch( { 
         url_tb <- url %>%
@@ -46,12 +77,14 @@ getPageData <- function(df){
         df[i, 'metadata'] <- NA
       })
     } else {
+      # categorize as 'New Website' if no metadata is detected
       df[i, 'metadata'] <- NA
       df[i, 'pageType'] <- 'New Website'
     }
     
   }
   
+  # categorize as 'Article' or 'Report' if these terms are detected in the metadata
   df <- df %>% 
     mutate(pageType = ifelse(grepl('article', tolower(metadata)), 'Article',
                              ifelse(grepl('report', tolower(metadata)), 'Report', pageType)),
@@ -61,28 +94,30 @@ getPageData <- function(df){
   
 }
 
-## get web traffic and key metrics for all pages
+## get web traffic metrics for all pages
 getPageMetrics <- function(propertyID, pages){
   campaignPages <- ga_data(
     propertyID,
-    metrics = c('screenPageViews', "totalUsers", "userEngagementDuration", 'sessions'),
+    metrics = c('screenPageViews', "totalUsers", "userEngagementDuration"),
     dimensions = c("pageTitle"),
     date_range = dateRangeGA,
     dim_filters = ga_data_filter("pageTitle" == pages),
     limit = -1
   ) %>% 
+    # calculate average engagement duration from userEngagementDuration and convert seconds to mm:ss format
     mutate(engagementDuration = userEngagementDuration / totalUsers,
            sec = round(engagementDuration %% 60, 0),
            min = (engagementDuration / 60) |> floor(),
            avgEngagementDuration = paste0(min, ':', sec)) %>% 
     select(pageTitle, screenPageViews, totalUsers, engagementDuration, avgEngagementDuration) %>% 
     left_join(select(pageData, c(pageTitle, pageType, icon)), by = c('pageTitle')) %>% 
+    # remove " - RMI" from end of page titles
     mutate(pageTitle = gsub(' - RMI', '', pageTitle))
   
   return(campaignPages)
 }
 
-## function - correct social media and email channel traffic
+## correct GA acquisition attribution for social media and email channels 
 correctTraffic <- function(df, type){
   if(type == 'session'){
     df <- df %>% 
@@ -107,9 +142,9 @@ correctTraffic <- function(df, type){
   return(df)
 }
 
+## get page traffic (# sessions) driven by social media channels
 getTrafficSocial <- function(propertyID, pages, site = 'rmi.org'){
   
-  ## get social traffic
   aquisitionSocial <- ga_data(
     propertyID,
     metrics = c("sessions", "screenPageViews"),
@@ -131,9 +166,9 @@ getTrafficSocial <- function(propertyID, pages, site = 'rmi.org'){
   return(aquisitionSocial)
 }
 
+## get page views broken down by country and region
 getTrafficGeography <- function(propertyID, pages, site = 'rmi.org'){
   
-  ## get page views by region
   trafficByRegion <- ga_data(
     propertyID,
     metrics = c('screenPageViews'),
@@ -142,6 +177,7 @@ getTrafficGeography <- function(propertyID, pages, site = 'rmi.org'){
     dim_filters = ga_data_filter("pageTitle" == pages),
     limit = -1
   ) %>% 
+    # filter out regions where page views < 5
     filter(screenPageViews > 4) %>% 
     arrange(pageTitle) %>% 
     dplyr::rename('Region Page Views' = screenPageViews) %>% 
@@ -152,9 +188,11 @@ getTrafficGeography <- function(propertyID, pages, site = 'rmi.org'){
   return(trafficByRegion)
 }
 
+# get sessions and conversions attributions for acquisition channels (organic, email, social, paid ads, etc.)
+# sessions and conversions use different dimensions so make separate calls for each then bind rows
 getAcquisition <- function(propertyID, pages, site = 'rmi.org'){
   
-  ## get acquisition sessions
+  # 1) get sessions
   aquisitionSessions <- ga_data(
     propertyID,
     metrics = c("sessions"),
@@ -189,7 +227,7 @@ getAcquisition <- function(propertyID, pages, site = 'rmi.org'){
       dplyr::summarize('Downloads' = sum(download),
                        'Form Submissions' = sum(form_submit)) 
     
-    # 3) bind rows: sessions + conversions 
+    # 3) bind sessions + conversions 
     acquisition <- acquisition %>% 
       left_join(aquisitionConversions, by = c('pageTitle', 'defaultChannelGroup')) 
     
@@ -202,6 +240,8 @@ getAcquisition <- function(propertyID, pages, site = 'rmi.org'){
   
 }
 
+## get page traffic (#sessions) driven by referral sources that have been identified as “Media” 
+## these sources are defined in the referralSites file
 getReferrals <- function(propertyID, pages, site = 'rmi.org'){
   
   referrals <- ga_data(
@@ -229,32 +269,35 @@ getReferrals <- function(propertyID, pages, site = 'rmi.org'){
   
 }
 
-#### PARDOT / EMAILS
+#### PARDOT (EMAIL NEWSLETTERS) ####
 
 ### Email Stats
 
+## get all Spark and Market Catalyst newsletters
 getAllEmailStats <- function(){
   
-  # find link on Email Stats spreadsheet
+  # get Spark newsletters
   emailStatsSpark <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Spark Stats (Unformatted)') %>% 
     mutate(date = as.Date(date))
   
-  # find link on Email Stats spreadsheet
+  # get Market Catalyst newsletters
   emailStatsPEM <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Market Catalyst Stats (Unformatted)') 
   
+  # bind 
   allEmailStats <- emailStatsSpark %>% 
     plyr::rbind.fill(emailStatsPEM) %>% 
     mutate(date = as.Date(date),
+           # change name format
            name = ifelse(grepl('Spark', name), paste0(date, ': Spark'), paste0(date, ':', sub('(.*)-[0-9]{2}', '', name))),
            id = as.numeric(id))
   
   return(allEmailStats)
 }
 
-
+## filter all newsletters dataframe by page URLs
 getCampaignEmails <- function(pageURLs){
   
-  ## filter to grab emails and story URLs
+  ## filter each of the 3 "story_url" columns for provided URL
   df1 <- allEmailStats %>%
     filter(grepl(paste(pageURLs, collapse = '|'), url_1)) %>% 
     select(c(1:22))
@@ -273,14 +316,14 @@ getCampaignEmails <- function(pageURLs){
   
   colnames(df3)[c(19:22)] <- c("story_url", "story_title", "story_clicks", "story_COR")
   
-  # bind 
+  # bind matches
   allStoryStats <- df1 %>% 
     rbind(df2) %>% 
     rbind(df3) %>% 
     mutate(date = as.Date(date),
            story_title = gsub(' - RMI', '', story_title))
   
-  # add icon 
+  # order by date and keep relevant columns
   allStoryStats <- allStoryStats[rev(order(allStoryStats$date)),] %>% 
     select(id, name, date, delivered_ = delivered, unique_opens, open_rate, unique_clicks,
            unique_CTR, UCTRvsAvg, story_url, story_title, story_clicks, story_COR)
@@ -290,13 +333,16 @@ getCampaignEmails <- function(pageURLs){
 
 ### Email Clicks
 
-## get email clicks for campaign
+## function to make a GET call through Pardot API
 get <- function(url, header) {
   request <- GET(url, add_headers(.headers = header))
   response <- jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8"))
 }
 
-## get clicks per email
+## get individual link clicks from list emails by iterating through a list of email IDs
+## limit of 200 rows returned are returned at a time so use the nextDate field to get the next page of results
+## iterate until query returns a dataframe with < 200 rows
+
 getBatchClicks <- function(emailId, df){
   allClicks <- data.frame(id = '', prospect_id = '', url = '', list_email_id = '', email_template_id = '', created_at = '')[0,]
   
@@ -330,7 +376,8 @@ getBatchClicks <- function(emailId, df){
   return(allClicks)
 }
 
-## get email clicks for all emails dating back to 01/2022
+## function to apply getBatchClicks to a list of emailIDs
+## returns df with all link clicks attached to those emails
 getProspectClicks <- function(df){
   clicksTotal <- data.frame(id = '', prospect_id = '', url = '', list_email_id = '', email_template_id = '', created_at = '')[0,]
   
@@ -343,7 +390,7 @@ getProspectClicks <- function(df){
 }
 
 
-#### SALESFORCE
+#### SALESFORCE ####
 
 ## get all prospects (all contacts and leads with Pardot Activity)
 getProspects <- function() {
@@ -372,8 +419,12 @@ getProspects <- function() {
   allLeads <- sf_query(my_soql, 'Lead', api_type = "Bulk 1.0") %>% 
     select(Id, Name, Account = Company, Email, Pardot_URL = pi__url__c, Pardot_Score = pi__score__c) %>% 
     mutate(RecordType = 'Lead') %>% 
+    ## there are many instances of duplicate Pardot URLs (which contains a prosepct's Pardot ID)
+    ## in which there one person has both a Lead and Contact record
+    ## anti_join to get rid of all Leads if a Contact has the same Pardot URL
     anti_join(allContacts, by = 'Pardot_URL')
   
+  # bind contacts and leads
   prospects <- allContacts %>% 
     plyr::rbind.fill(allLeads) %>% 
     filter(!is.na(Email))
@@ -381,22 +432,24 @@ getProspects <- function() {
   # identify and remove duplicates
   dup <- prospects[duplicated(prospects[,c("Pardot_URL")]) | duplicated(prospects[,c("Pardot_URL")], fromLast = TRUE), ] 
   
+  # from list of duplicated, filter for records where there is no account name
   dup1 <- dup %>% 
     filter(grepl('unknown|not provided|contacts created', tolower(Account))|Account == ''|is.na(Account)) %>% 
     distinct(Pardot_URL, .keep_all = TRUE)
   
+  # remove these prospects
   prospects_keep <- prospects %>% 
     anti_join(dup1) 
   
+  # finally, apply distinct() to remove all duplicate instances 
   unique_prospects <- prospects_keep %>% 
     distinct(Pardot_URL, .keep_all = TRUE)
   
-  ## 188,615 unique prospects
-  
+  ## final df contains 188,615 unique prospects
   return(unique_prospects)
 }
 
-## get all accounts
+## get all accounts from SF
 getAllAccounts <- function(){
   
   my_soql <- sprintf("SELECT Id, Name, Type, Industry, Email_Domain__c, D_B_Business_Name__c, D_B_Company_Description__c, 
@@ -416,9 +469,9 @@ getAllAccounts <- function(){
   return(all_accounts)
 }
 
-### REPORTS AND EVENTS
+## get reports and events
 
-# get list of campaigns
+# get list of all campaigns created after 2022-01-01
 getCampaignList <- function(){
   my_soql <- sprintf("SELECT Id, 
                            Name,
@@ -437,7 +490,7 @@ getCampaignList <- function(){
   return(campaignList)
 }
 
-# get campaign members and join to contact/lead/account info
+# for a list of campaign IDs, get campaign members and join to contact/lead/account info
 getCampaignMembers <- function(campaignIdList, campaignType) {
   
   # get campaign members
@@ -465,6 +518,7 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
     filter(!is.na(LeadId) & is.na(ContactId)) %>% 
     distinct(LeadId, .keep_all = TRUE) 
   
+  ## get info for contacts in campaign
   my_soql <- sprintf("SELECT Id, Name, Account_Name_Text__c, Email,
                              pi__url__c, pi__score__c, pi__last_activity__c,
                              Giving_Circle__c, Number_of_Days_since_Last_Gift_or_SC__c, AccountId
@@ -482,6 +536,7 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
     mutate(RecordType = 'Contact') %>% 
     filter(!is.na(AccountId))
   
+  ## get info for leads in campaign
   my_soql <- sprintf("SELECT Id,  Name, Company, Email, pi__url__c, pi__score__c, pi__last_activity__c
 
                       FROM Lead
@@ -493,7 +548,7 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
     select(Id, Name, Account = Company, Email, Pardot_URL = pi__url__c, Pardot_Score = pi__score__c) %>% 
     mutate(RecordType = 'Lead') 
   
-  # accounts in campaign (contacts)
+  # get info for accounts that match the AccountID field pulled from contacts query
   my_soql <- sprintf("SELECT Id, Name, Type, Industry, Email_Domain__c, D_B_Business_Name__c, D_B_Company_Description__c, 
                       D_B_Major_Industry_Category_Name__c, D_B_NAICS_Description_1__c, D_B_NAICS_Description_2__c,
                       D_B_SIC4_Code_1_Description__c, D_B_SIC4_Code_2_Description__c,
@@ -508,6 +563,7 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
     select(AccountId = Id, Account = Name, AccountType = Type, Industry, AccountDomain = Email_Domain__c,
            TotalGiving = Total_Opportunity_Payments__c, NumOpenOpps = Number_of_Open_Opportunities__c)
   
+  # join
   campaignContactsQuery <- campaignContactsQuery %>% 
     left_join(select(campaignContactAccounts, -Account), by = c('AccountId'))
   
@@ -517,15 +573,18 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
   contactsLeads <- campaignContactsQuery %>%
     plyr::rbind.fill(campaignLeadsQuery) 
   
+  # join to campaign members df
   CampaignMembers <- campaign_members %>% 
     mutate(Id = ifelse(is.na(ContactId), LeadId, ContactId)) %>% 
     select(CampaignId, CampaignName, Name, Id, Status, CreatedDate) %>% 
     left_join(contactsLeads, by = c('Id', 'Name'))
   
+  # specify campaign type
   if(campaignType == 'Event'){
     
     CampaignMembers <- CampaignMembers %>% 
       mutate(EngagementType = 'Event',
+             # rename status categories and filter for rows where status is "registered" or "attended"
              Status = ifelse(grepl('Register', Status), 'Registered (Did Not Attend)', Status)) %>% 
       filter(grepl('Register|Attended', Status))
     
@@ -537,8 +596,10 @@ getCampaignMembers <- function(campaignIdList, campaignType) {
   }
   
   CampaignMembers <- CampaignMembers %>% 
+    # get domain from email
     mutate(Domain = sub("(.*)\\@", "", Email),
            EngagementDate = as.Date(CreatedDate, format = "%Y-%m-%d")) %>% 
+    # select and reorder columns
     select(CampaignName, EngagementType, Id, RecordType, Status, EngagementDate, Name, Email, Domain, Account, AccountType, Industry, 
            TotalGiving, NumOpenOpps, Pardot_Score, Pardot_URL, Giving_Circle, Last_Gift, AccountId)
   
@@ -552,36 +613,47 @@ cleanCampaignDF <- function(df){
   df <- df %>% 
     filter(!is.na(Domain)) %>% 
     distinct(Id, CampaignName, .keep_all = TRUE) %>% 
-    mutate(DonorType = 
-             case_when(
-               !is.na(Giving_Circle) ~ Giving_Circle,
-               !is.na(Last_Gift) ~ 'Donor',
-               .default = NA
-             ),
-           Icon = 
-             case_when(
-               EngagementType == 'Report Download' ~ 1,
-               EngagementType == 'Event' ~ 2, 
-               EngagementType == 'Event' ~ 3, 
-               .default = NA
-             ),
-           Pardot_ID = sub("(.*)=", "", Pardot_URL)) %>% 
+    mutate(
+      DonorType = 
+        # define donor type
+        case_when(
+           !is.na(Giving_Circle) ~ Giving_Circle,
+           !is.na(Last_Gift) ~ 'Donor',
+           .default = NA
+           ),
+      # define icon for Power BI
+      Icon = 
+        case_when(
+           EngagementType == 'Report Download' ~ 1,
+           EngagementType == 'Event' ~ 2, 
+           EngagementType == 'Newsletter' ~ 3, 
+           .default = NA
+           ),
+      # get Pardot ID from Pardot URL
+      Pardot_ID = sub("(.*)=", "", Pardot_URL)) %>% 
+    # join all accounts based on email domain
+    # use account name, account type, and industry if these fields are empty
     left_join(select(all_accounts, c(AccountsName = Account, Domain = AccountDomain, AccountsIndustry = Industry, AccountType2 = AccountType)), by = c('Domain')) %>% 
     mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account),
            Industry = ifelse(Account == 'Unknown' & !is.na(Industry), AccountsIndustry, Industry),
            AccountType = ifelse(Account == 'Unknown' | (is.na(AccountType) & !is.na(AccountType2)), AccountType2, AccountType)) %>% 
     mutate(Account = ifelse(Account == 'Unknown' & !is.na(AccountsName), AccountsName, Account),
            Account = ifelse(is.na(Account), 'Unknown', Account)) %>% 
-    left_join(select(domainKey, c(govDomain = domain, level, govName = name)), by = c('Domain' = 'govDomain')) %>%
-    
+    # join info for government accounts using domain info specified in the govDomains file
+    left_join(select(govDomains, c(govDomain = domain, level, govName = name)), by = c('Domain' = 'govDomain')) %>%
     mutate(
       Account = 
         case_when(
           is.na(Account) ~ 'Unknown',
+          # label all Household accounts as Household (remove individual names)
+          # label all RMI accounts as Household
           grepl('Household', Account) | Account == 'RMI' ~ 'Household',
+          # use account name matches from govDomains file if account name is unknown
           Account == 'Unknown' & !is.na(govName) ~ govName,
           .default = Account
         ),
+      # create audience grouping to categorize accounts that fall under Government, NGO, Multilaterals, 
+      # Financial Entities, Utilities/Power Generators, Other Corporate, Academic, or Foundation
       Audience1 = 
         case_when(
           level == 'FEDERAL' ~ 'National Gov.',
@@ -606,6 +678,8 @@ cleanCampaignDF <- function(df){
         ),
       Audience2 = ifelse(grepl('Gov', Audience1), 'Government', Audience1)
     ) %>% 
+    # create True or False columns for each of the following variables to make 
+    # data maniuplation easier on Power BI
     mutate(DownloadTF = ifelse(grepl('Download', EngagementType), 1, NA),
            EventTF = ifelse(grepl('Attended', Status), 1, NA),
            EmailClickTF = ifelse(grepl('Click', EngagementType), 1, NA),
@@ -617,6 +691,7 @@ cleanCampaignDF <- function(df){
            LastGift = as.numeric(Last_Gift),
            LapsedDonorsTF = ifelse((LastGift > 549 & LastGift < 1825), 1, NA),
            Engagements = ifelse(!grepl('Registered', Status), 1, NA)) %>% 
+    # select and reorder columns
     select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
            DonorType, AccountId, Account, AccountType, Audience1, Audience2, Industry, TotalGiving, Name, Pardot_Score,
            Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
@@ -624,9 +699,116 @@ cleanCampaignDF <- function(df){
   return(df)
 }
 
-### get donations
-getDonations <- function(){
+
+### get campaign member data for reports (SF), events (SF), and email clicks (Pardot)
+getSalesforceData <- function(){
   
+  ## create dataframe for campaigns
+  df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
+  names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
+                 'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
+                 'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
+  
+  ## run if at least one of the following are true
+  if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
+    
+    #### GET REPORTS
+    
+    if(hasReport == TRUE){
+      
+      print('get reports')
+      campaignMembersReports <- getCampaignMembers(campaignReports$reportID, 'Report') 
+      campaignMembersReports <- cleanCampaignDF(campaignMembersReports)
+      
+      df <- df %>% 
+        rbind(campaignMembersReports)
+    }
+    
+    #### GET EVENTS
+    
+    if(hasEvent == TRUE){
+      
+      print('get events')
+      campaignMembersEvents <- getCampaignMembers(campaignEvents$eventID, 'Event')
+      campaignMembersEvents <- cleanCampaignDF(campaignMembersEvents)
+      
+      df <- df %>% 
+        rbind(campaignMembersEvents)
+    }
+    
+    #### GET EMAIL CLICKS
+    
+    if(hasEmail == TRUE){
+      
+      print('get emails')
+      
+      ## get all prospects
+      prospects <- getProspects() %>% 
+        mutate(Domain = sub("(.*)\\@", "", Email))
+      
+      ## get email IDs and story URLs from newsletters in this campaign
+      emailIDs <- data.frame(id = unique(campaignNewsletters$id))
+      storyLinks <- unique(campaignNewsletters$story_url)
+      
+      ## get clicks for these newsletters
+      print('get email clicks')
+      clicksAll <- getProspectClicks(emailIDs)
+      
+      ## clean and filter links for clicks on story URLs only
+      linkClicks <- clicksAll %>% 
+        mutate(url = sub('\\?(.*)', '', url)) %>% 
+        filter(grepl(paste(storyLinks, collapse = '|'), url))
+      
+      # clean clicks df
+      clicksByProspect <- select(linkClicks, c(emailId = list_email_id, Pardot_URL = prospect_id, url, created_at)) %>% 
+        # pardot call doesn't supply contact IDs or Account IDs so join using Pardot IDs embedded in Pardot URLs
+        mutate(Pardot_URL = paste0("http://pi.pardot.com/prospect/read?id=", as.character(Pardot_URL)),
+               EngagementDate = as.Date(created_at, format="%Y-%m-%d")) %>% 
+        left_join(prospects, by = c('Pardot_URL')) %>% 
+        left_join(select(allEmailStats, c(emailId = id, CampaignName = name)), by = 'emailId') %>% 
+        mutate(Status = 'Email',
+               EngagementType = 'Newsletter') %>% 
+        mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account)) %>% 
+        # left join all accounts using account name
+        left_join(select(accountsUnique, c(AccountsName = Account, AccountDomain, Industry, AccountType, TotalGiving, 
+                                           NumGifts, NumOpenOpps, AccountId2 = AccountId)), 
+                  by = c('Account' = 'AccountsName')) %>% 
+        select(CampaignName, EngagementType, Id, RecordType, Status, EngagementDate, Name, Email, Domain, Account, AccountType, Industry,
+               TotalGiving, NumOpenOpps, Pardot_Score, Pardot_URL, Giving_Circle, Last_Gift, AccountId)
+      
+      # clean df and set audience groups
+      campaignMembersEmail <- cleanCampaignDF(clicksByProspect)
+      
+      df <- df %>% 
+        rbind(campaignMembersEmail)
+    }
+    
+    # remove duplicates
+    df <- df %>% distinct(Id, CampaignName, .keep_all = TRUE)
+    
+    return(df)
+  } else {
+    return(df)
+  }
+}
+
+#### Donations
+
+## get opportunities (donations) submitted by all contacts in this campaign
+## 1. filter for donations that occurred after interacting with this campaign
+## 2. calculate attributed revenue
+
+## Donation Revenue Attribution:
+## Donation revenue is attributed if a contact engaged with a campaign component up to 9 months after making a donation. 
+## The full amount is attributed within the first 30 days of a donation. After this point, the value is discounted by 
+## a factor of 0.0041 (1/244 days) for each additional day.
+## If a donor engaged with multiple campaign components, the donation value is divided accordingly.
+
+
+### get opportunities
+getOpportunities <- function(){
+  
+  print('get donations')
   allOpportunities <- data.frame(DonationID = '', DonationDate = '', DonationValue = '', Pardot_ID = '', EngagementDate = '',
                                  EngagementType = '', CampaignName = '', Pardot_Score = '',
                                  TotalGiving = '', DonorType = '')[0,]
@@ -660,134 +842,28 @@ getDonations <- function(){
   return(allOpportunities)
 }
 
-
-### get campaign member data for reports (SF), events (SF), and email clicks (Pardot)
-getSalesforceData <- function(){
-  
-  ## create dataframe for campaigns
-  df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
-  names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
-                 'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
-                 'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
-  
-  ## only run if at least 1 campaign exists
-  if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
-    
-    # ## get list of campaigns
-    # campaignList <- getCampaignList()
-    # 
-    # ## get all accounts
-    # all_accounts <- getAllAccounts() 
-    # 
-    # ## get domain info for gov accounts
-    # domainKey <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/domainKey.xlsx') 
-    # 
-    # ## get audience domains and accounts
-    # audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
-    # audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
-    # audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
-    # 
-    # ## create dataframe for campaigns
-    # df <- as.data.frame(matrix(0, ncol = 19, nrow = 0))
-    # names(df) <- c('CampaignName', 'EngagementType', 'Id', 'RecordType', 'Status', 'EngagementDate', 
-    #                'Name', 'Email', 'Domain', 'Account', 'AccountType', 'Industry', 'TotalGiving', 
-    #                'NumOpenOpps', 'Pardot_Score', 'Pardot_URL', 'Giving_Circle', 'Last_Gift', 'AccountId') 
-    
-    if(hasReport == TRUE){
-      
-      print('get reports')
-      campaignMembersReports <- getCampaignMembers(campaignReports$reportID, 'Report') 
-      campaignMembersReports <- cleanCampaignDF(campaignMembersReports)
-      
-      df <- df %>% 
-        rbind(campaignMembersReports)
-    }
-    
-    if(hasEvent == TRUE){
-      
-      print('get events')
-      campaignMembersEvents <- getCampaignMembers(campaignEvents$eventID, 'Event')
-      campaignMembersEvents <- cleanCampaignDF(campaignMembersEvents)
-      
-      df <- df %>% 
-        rbind(campaignMembersEvents)
-    }
-    
-    ##### GET EMAIL CLICKS
-    
-    if(hasEmail == TRUE){
-      
-      print('get emails')
-      
-      ## get all prospects
-      prospects <- getProspects() %>% 
-        mutate(Domain = sub("(.*)\\@", "", Email))
-      
-      ## get email IDs and URLs from email story stats data
-      emailIDs <- data.frame(id = unique(campaignNewsletters$id))
-      storyLinks <- unique(campaignNewsletters$story_url)
-      
-      ## get clicks for email of interest
-      print('get email clicks')
-      clicksAll <- getProspectClicks(emailIDs)
-      
-      ## clean and filter links
-      linkClicks <- clicksAll %>% 
-        mutate(url = sub('\\?(.*)', '', url)) %>% 
-        filter(grepl(paste(storyLinks, collapse = '|'), url))
-      
-      accountsUnique <- all_accounts[!duplicated(all_accounts$Account) & !duplicated(all_accounts$Account, fromLast = TRUE),] %>% 
-        filter(!grepl('unknown|not provided|contacts created by revenue grid', Account))
-      
-      # clean clicks df
-      clicksByProspect <- select(linkClicks, c(emailId = list_email_id, Pardot_URL = prospect_id, url, created_at)) %>% 
-        mutate(Pardot_URL = paste0("http://pi.pardot.com/prospect/read?id=", as.character(Pardot_URL)),
-               EngagementDate = as.Date(created_at, format="%Y-%m-%d")) %>% 
-        left_join(prospects, by = c('Pardot_URL')) %>% 
-        left_join(select(allEmailStats, c(emailId = id, CampaignName = name)), by = 'emailId') %>% 
-        mutate(Status = 'Email',
-               EngagementType = 'Newsletter Click') %>% 
-        mutate(Account = ifelse(grepl('unknown|not provided|contacts created', tolower(Account))|Account == '', 'Unknown', Account)) %>% 
-        left_join(select(accountsUnique, c(AccountsName = Account, AccountDomain, Industry, AccountType, TotalGiving, 
-                                           NumGifts, NumOpenOpps, AccountId2 = AccountId)), 
-                  by = c('Account' = 'AccountsName')) %>% 
-        select(CampaignName, EngagementType, Id, RecordType, Status, EngagementDate, Name, Email, Domain, Account, AccountType, Industry,
-               TotalGiving, NumOpenOpps, Pardot_Score, Pardot_URL, Giving_Circle, Last_Gift, AccountId)
-      
-      campaignMembersEmail <- cleanCampaignDF(clicksByProspect)
-      
-      df <- df %>% 
-        rbind(campaignMembersEmail)
-    }
-    
-    df <- df %>% distinct(Id, CampaignName, .keep_all = TRUE)
-    
-    return(df)
-  } else {
-    return(df)
-  }
-}
-
-getDonationsDF <- function(df){
-  ## get donations attributed to campaigns
-  print('get donations')
+## calculate attributed donation value
+getAttributedDonationValue <- function(df){
   
   if(nrow(df) > 0){
+    
+    # get all donors in this campaign
     donors <- df %>% 
       select(Pardot_ID, Name, DonorType, EngagementType, CampaignName, EngagementDate, Id, Pardot_Score, TotalGiving, Account) %>% 
       distinct() %>% 
       filter(!is.na(DonorType))
     
-    print('get donations')
+    # get donation history for these donors
     allOpps <- getDonations() 
     
     # select donations made after campaign
     donations <- allOpps %>% 
       filter(DonationDate > EngagementDate)
     
+    # find donations that touch multiple campaign components
     uniqueDonations <- donations %>% 
-      dplyr::group_by(DonationId) %>% 
-      dplyr::summarize(count = n())
+      group_by(DonationId) %>% 
+      summarize(count = n())
     
     donations <- donations %>% 
       # calculate attributed donation value
@@ -797,6 +873,7 @@ getDonationsDF <- function(df){
              TimeDifferenceAdjusted = ifelse(TimeDifference < 31, 1, TimeDifference),
              AttributtedValue = ifelse(DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)) < 0, 0, DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)))) %>% 
       relocate(DonationValue, .before = AttributtedValue) %>%  
+      # adjust attribution value for donations that attributed to multiple campaign components
       left_join(uniqueDonations) %>% 
       mutate(AttributtedValue = round(AttributtedValue/count, 1)) %>% 
       filter(AttributtedValue > 0) %>% 
@@ -808,64 +885,6 @@ getDonationsDF <- function(df){
   }
   
 }
-#     ## get donations attributed to campaigns
-#     print('get donations')
-#     
-#     donors <- df %>% 
-#       select(Pardot_ID, Name, DonorType, EngagementType, CampaignName, EngagementDate, Id, Pardot_Score, TotalGiving, Account) %>% 
-#       distinct() %>% 
-#       filter(!is.na(DonorType))
-#     
-#     print('get donations')
-#     allOpps <- getDonations() 
-#     
-#     # select donations made after campaign
-#     donations <- allOpps %>% 
-#       filter(DonationDate > EngagementDate)
-#     
-#     uniqueDonations <- donations %>% 
-#       dplyr::group_by(DonationId) %>% 
-#       dplyr::summarize(count = n())
-#     
-#     donations <- donations %>% 
-#       # calculate attributed donation value
-#       mutate(DonationValue = as.numeric(DonationValue),
-#              TimeDifference = difftime(DonationDate, EngagementDate, units = "days"),
-#              TimeDifference = as.numeric(gsub("[^0-9.-]", "", TimeDifference)),
-#              TimeDifferenceAdjusted = ifelse(TimeDifference < 31, 1, TimeDifference),
-#              AttributtedValue = ifelse(DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)) < 0, 0, DonationValue / (1/(1.0041 - 0.0041*TimeDifferenceAdjusted)))) %>% 
-#       relocate(DonationValue, .before = AttributtedValue) %>%  
-#       left_join(uniqueDonations) %>% 
-#       mutate(AttributtedValue = round(AttributtedValue/count, 1)) %>% 
-#       filter(AttributtedValue > 0) %>% 
-#       select(-TimeDifferenceAdjusted) 
-#     
-#     oppsByProspect <- donations %>% 
-#       group_by(Id, CampaignName) %>% 
-#       summarize(AttributtedDonationValue = sum(AttributtedValue))
-#     
-#     # bind donations and clean dataframe
-#     final <- df %>% 
-#       left_join(oppsByProspect) %>% 
-#       select(CampaignName, EngagementType, Icon, Id, Status, EngagementDate, Domain, Email, 
-#              DonorType, AttributtedDonationValue, AccountId, Account, AccountType, Audience1, Audience2, Industry, 
-#              Pardot_URL, Pardot_ID, GivingCircleTF, SolutionsCouncilTF, InnovatorsCircleTF, OpenOppTF, DonorTF, 
-#              LapsedDonorsTF, DownloadTF, EventTF, EmailClickTF, Engagements) 
-#     
-#     # push data
-#     print('push salesforce data')
-#     
-#     ALL_SALESFORCE <- pushData(final, 'Salesforce')
-#     ALL_DONATIONS <- pushData(donations, 'SF Donations')
-#     #write_sheet(final, ss = ss, sheet = 'Salesforce')
-#     #write_sheet(donations, ss = ss, sheet = 'SF Donations')
-#     return(final)
-#     
-#   } else {
-#     print('there are no reports, events, or emails in this campaaign')
-#   }
-# }
-
 
 #### SPROUT SOCIAL
 
@@ -877,7 +896,7 @@ getMetadata <- function(url) {
   return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
 }
 
-## make call
+## call for all other requests
 getCall <- function(url, args) {
   request <- POST(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
                   body = toJSON(args, auto_unbox = TRUE),
@@ -889,6 +908,8 @@ getCall <- function(url, args) {
 ## post analytics request
 sproutPostRequest <- function(page, dateRange, profileIDs, AVG = FALSE){
   
+  ## set AVG == TRUE when making call to get all posts from the past year
+  ## some posts this far back weren't getting tagged so the internal.tags.id field returns an error
   if(AVG == FALSE) {
     fields <- c(
       "created_time",
@@ -897,6 +918,7 @@ sproutPostRequest <- function(page, dateRange, profileIDs, AVG = FALSE){
       "internal.tags.id",
       "post_type")
   } else {
+    ## remove internal.tags.id field if AVG == TRUE
     fields <- c(
       "created_time",
       "perma_link",
@@ -904,15 +926,23 @@ sproutPostRequest <- function(page, dateRange, profileIDs, AVG = FALSE){
       "post_type")
   }
   
+  ## define arguments
   args <- list(
     "fields" = fields,
+    ## profile IDs are specific to an account (e.g. RMI Brand LinkedIn, RMI Buildings Twitter)
+    ## make sure to supply the appropriate profileIDs for each account you want to include in your request
     "filters" = c(paste0("customer_profile_id.eq", profileIDs),
                   dateRange),
+    ## post metrics
     "metrics" = c("lifetime.impressions", "lifetime.engagements", "lifetime.post_content_clicks", "lifetime.shares_count"), 
     "timezone" = "America/Denver",
     "page" = paste(page))
   
+  ## make call
   getStats <- getCall(url = 'analytics/posts', args = args)
+  
+  ## call returns 50 posts at a time
+  ## NULL indicates that you have reached the last page of results, so make call until value is NULL
   if(is.null(getStats[["paging"]])) {
     postStats <- NULL
   } else if(AVG == FALSE) {
@@ -934,16 +964,19 @@ sproutPostRequest <- function(page, dateRange, profileIDs, AVG = FALSE){
 
 ## get all social media posts with tags
 getAllSocialPosts <- function(){
+  
   # create data frame to store all posts
   allPostsTags <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
                              lifetime.impressions = '', lifetime.post_content_clicks = '', 
                              lifetime.engagements = '', lifetime.shares_count = '', id = '')[0, ]
   
   # get all posts from social channels dating back to Jan 1, 2023
+  # note: 300 was chosen as an arbitrary ceiling. the call will end well before this point is reached.
   for(i in 1:300){
     postStats <- sproutPostRequest(i, 
                                    dateRange = paste0("created_time.in(", '2023-01-01', "T00:00:00..", currentDate, "T23:59:59)"),
                                    profileIDs = '(3244287, 2528134, 2528107, 2528104, 3354378, 4145669, 4400432, 4613890, 5083459, 5097954, 5098045, 5251820, 5334423, 5403312, 3246632, 5403593, 5403597)') 
+    # break loop if NULL value is returned (indicates last page reached)
     if(is.null(postStats)){ break }
     
     # unnest tags
@@ -961,8 +994,6 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   posts <- df %>% 
     mutate(engagementRate = round(as.numeric(lifetime.engagements)/as.numeric(lifetime.impressions), 3),
            created_time = as.Date(sub('T(.*)', '', created_time)),
-           month = lubridate::month(ymd(created_time), label = TRUE, abbr = FALSE),
-           date = paste0(month, ' ', format(created_time,"%d"), ', ', format(created_time,"%Y")),
            icon = '') %>% 
     mutate(across(lifetime.impressions:engagementRate, ~ as.numeric(.x))) %>% 
     filter(!is.na(lifetime.impressions)) %>% 
@@ -970,6 +1001,7 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   
   for(i in 1:nrow(posts)){
     
+    # rename post types
     if(grepl('LINKEDIN_COMPANY_UPDATE', posts[i, 'post_type'])){
       posts[i, 'post_type'] <- "LinkedIn"
       posts[i, 'icon'] <- paste(1)
@@ -984,6 +1016,10 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
       posts[i, 'icon'] <- paste(4)
     }
     
+    # call doesn't return the account/profileID that made the post so use
+    # post links to identify the account
+    # this works for all platforms except LinkedIn, which doesn't include
+    # account info in post URLs
     link <- posts[i, 'perma_link']
     
     if(grepl('twitter.com/RMI_Industries', link)){
@@ -1014,6 +1050,7 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
       posts[i, 'account'] <- 'Jon Creyts'
     }
     
+    # identify LinkedIn program accounts by making separate calls for each of the following
     if(linkedin == 'Buildings'){
       posts[i, 'account'] <- 'RMI Buildings'
     } else if(linkedin == 'Transportation'){
@@ -1044,7 +1081,7 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   return(posts)
 }
 
-## get linkedin program account posts
+## get LinkedIn posts from program accounts (all non-brand accounts)
 getPosts <- function(ids, type){
   
   APT <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
@@ -1055,7 +1092,6 @@ getPosts <- function(ids, type){
     postStats <- sproutPostRequest(i, paste0("created_time.in(2023-04-01T00:00:00..", currentDate, "T23:59:59)"), profileIDs = ids) 
     if(is.null(postStats)){ break }
     
-    # data frame - posts with all tags
     postStats <- postStats %>% unnest(tags)
     APT <- APT %>% rbind(postStats)
     
@@ -1065,7 +1101,7 @@ getPosts <- function(ids, type){
   
 }
 
-## get and bind all posts from program accounts
+## get and bind all posts from program accounts after adding an account identifier
 getLIProgramPosts <- function(type){
   LICFAN <- cleanPostDF(getPosts('(5381251)', type), type = type, linkedin = 'CFAN')
   LICCAF <- cleanPostDF(getPosts('(5403265)', type), type = type, linkedin = 'CCAF')
@@ -1076,14 +1112,14 @@ getLIProgramPosts <- function(type){
   return(LI)
 }
 
+## get post metrics (AVGs) based on all posts made over the last year (brand accounts only)
 getPostAverages <- function(){
   
-  # create data frame
   posts1YR <- data.frame(created_time = '', post_type = '', text = '', perma_link = '',
                          lifetime.impressions = '', lifetime.post_content_clicks = '',
                          lifetime.engagements = '', lifetime.shares_count = '')[0, ]
   
-  # get all posts from social channels over the past year
+  # get all posts from social channels made over the past year
   for(i in 1:300){
     postStats <- sproutPostRequest(i, 
                                    dateRange = paste0("created_time.in(", oneYearAgo, "T00:00:00..", currentDate, "T23:59:59)"),
@@ -1095,6 +1131,7 @@ getPostAverages <- function(){
   }
   
   posts1YRaverage <- cleanPostDF(posts1YR, 'all') %>%
+    # filter out reposts
     filter(impressions > 0 & !grepl('ugcPost', perma_link)) %>%
     group_by(post_type, account) %>%
     summarize(
@@ -1107,6 +1144,7 @@ getPostAverages <- function(){
 
 #### MONDAY.COM
 
+## Monday.com API call
 getMondayCall <- function(x) {
   request <- POST(url = "https://api.monday.com/v2",
                   body = list(query = x),
@@ -1114,35 +1152,6 @@ getMondayCall <- function(x) {
                   add_headers(Authorization = mondayToken)
   )
   return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
-}
-
-###
-pushData <- function(df, sheetName){
-  
-  # bind campaign ID
-  df <- df %>% 
-    mutate(CAMPAIGN_ID = campaignID) %>% 
-    relocate(CAMPAIGN_ID, .before = 1)
-  
-  tryCatch({ 
-    
-    existingData <- read_sheet(ss = ss, sheet = sheetName) %>% 
-      rbind(df)
-    
-    if(mode == 'development'){
-      write_sheet(df, ss = ss, sheet = sheetName) 
-      return(df)
-    } else {
-      write_sheet(existingData, ss = ss, sheet = sheetName) 
-      return(existingData)
-    }
-    
-    
-  }, error = function(e) { 
-    write_sheet(df, ss = ss, sheet = sheetName) 
-    return(df) 
-  })
-  
 }
 
 

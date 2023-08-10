@@ -4,6 +4,7 @@ source("packages.R")
 source("functions.R")  
 
 ### SET CAMPAIGN
+
 # current options are 1. OCI 2. Coal v Gas
 campaign <- 'OCI'
 
@@ -26,8 +27,8 @@ header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardot
 header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
 ## Google Authentication
-options(gargle_oauth_cache = ".secrets")
-gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
+#options(gargle_oauth_cache = ".secrets")
+#gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 
 ## GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
@@ -40,7 +41,7 @@ ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo
 
 ## standard mode binds data to existing rows
 ## development mode overwrites all data in sheet
-mode <- 'standard'
+mode <- 'development'
 
 ### READ CAMPAIGN KEY
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
@@ -70,9 +71,8 @@ metadataGA4 <- ga_meta(version = "data", rmiPropertyID)
 dateRangeGA <- c("2023-01-01", paste(currentDate))
 
 ### get referral sites
-referralSites <- read_sheet('https://docs.google.com/spreadsheets/d/1DaP3VT4f53VuY7lcXzEbxZsfogz2rIwWYbi4OCNwePs/edit#gid=1192846843', 
-                            sheet = 'All Referral Sites')
-
+referralSites <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/referralSites.xlsx') 
+  
 ###
 campaignPages <- campaignPages %>% 
   mutate(site = ifelse(propertyID == rmiPropertyID, 'rmi.org', sub('/(.*)', '', sub('(.*)https://', '', page)))) %>% 
@@ -92,7 +92,6 @@ pages <- rmiPages[['pageTitle']]
 
 ## get page metrics
 pageMetrics <- getPageMetrics(rmiPropertyID, pages) 
-totalPageViews <- sum(pageMetrics$screenPageViews)
 
 ## get acquisition
 acquisition <- getAcquisition(rmiPropertyID, pages) 
@@ -124,13 +123,13 @@ if(length(propertyIDs) > 1){
     distinct()
   
   pageMetrics <- pageMetrics %>% rbind(pageMetricsNS)
-  totalPageViews <- sum(pageMetrics$screenPageViews)
   
   ### get acquisition
   acquisitionNS <- getAcquisition(sitePropertyID, pages, site = newSiteURL) 
   acquisition <- acquisition %>% rbind(acquisitionNS)
   
-  # bind page metrics and pivot table
+  # bind page metrics and pivot table so that sessions/conversions are stored in one column
+  # this is to make a Power BI table column that changes based on an applied filter
   allTraffic <- pageData %>% 
     select(site, pageTitle) %>% 
     distinct() %>% 
@@ -139,31 +138,30 @@ if(length(propertyIDs) > 1){
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
     mutate(totalPageViews = round(screenPageViews/6, 0),
-           count = ifelse(is.na(count), 0, count)) %>% 
+           count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
     filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
   
-  ### get social
+  ### get social and bind
   socialTrafficNS <- getTrafficSocial(sitePropertyID, pages, site = newSiteURL) 
   
-  # bind
   socialTraffic <- socialTraffic %>% 
     rbind(socialTrafficNS)
   
-  ### get geography
+  ### get geography and bind
   geographyTrafficNS <- getTrafficGeography(sitePropertyID, pages, site = newSiteURL) 
   
-  # bind
   geographyTraffic <- geographyTraffic %>% 
     rbind(geographyTrafficNS)
   
-  ### get referrals
+  ### get referrals and bind
   mediaReferralsNS <- getReferrals(sitePropertyID, pages, site = newSiteURL)
   
   mediaReferrals <- mediaReferrals %>% 
     rbind(mediaReferralsNS)
   
 } else {
-  # bind page metrics and pivot table
+  # bind page metrics and pivot table so that sessions/conversions are stored in one column
+  # this is to make a Power BI table column that changes based on an applied filter
   allTraffic <- pageData %>% 
     select(site, pageTitle) %>% 
     distinct() %>% 
@@ -172,7 +170,7 @@ if(length(propertyIDs) > 1){
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
     mutate(totalPageViews = round(screenPageViews/6, 0),
-           count = ifelse(is.na(count), 0, count)) %>% 
+           count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
     filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
 }
 
@@ -200,7 +198,7 @@ campaignNewsletters <- getCampaignEmails(pageURLs)
 # set hasEmail to FALSE if no emails detected
 if(nrow(campaignNewsletters) == 0) hasEmail <- FALSE else hasEmail <- TRUE
 
-# push data
+## push data
 print('push email stats data')
 
 ALL_NEWSLETTERS <- pushData(campaignNewsletters, 'Newsletters')
@@ -217,8 +215,12 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
   ## get all accounts
   all_accounts <- getAllAccounts() 
   
+  ## remove accounts with duplicate names to avoid errors when joining by Account name
+  accountsUnique <- all_accounts[!duplicated(all_accounts$Account) & !duplicated(all_accounts$Account, fromLast = TRUE),] %>% 
+    filter(!grepl('unknown|not provided|contacts created by revenue grid', Account))
+  
   ## get domain info for gov accounts
-  domainKey <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/domainKey.xlsx') 
+  govDomains <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/govDomains.xlsx') 
   
   ## get audience domains and accounts
   audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
@@ -253,6 +255,8 @@ ALL_DONATIONS <- pushData(donations, 'SF Donations')
 print('GET SOCIAL MEDIA DATA')
 
 # get profile IDs
+# profile IDs are specific to an account (e.g. RMI Brand LinkedIn, RMI Buildings Twitter)
+# supply the appropriate profile ID for each account you want to include in your request
 metadeta <- getMetadata(url = 'metadata/customer')
 profileIDs <- metadeta[["data"]]
 
@@ -260,7 +264,7 @@ profileIDs <- metadeta[["data"]]
 metadeta <- getMetadata(url = 'metadata/customer/tags')
 tags <- metadeta[["data"]]
 
-# find campaign tag
+# find the appropriate campaign tag ID using the socialTag
 campaignTag <- tags %>% filter(text == socialTag)
 tagID <- paste(campaignTag$tag_id)
 
@@ -270,19 +274,21 @@ allPostsTags <- getAllSocialPosts()
 # get all posts from linkedIn program channels
 linkedInTagged <- getLIProgramPosts('tagged')
 
-# clean all posts and bind linkedin program posts
+# clean and bind linkedin program posts to all posts
 taggedPosts <- cleanPostDF(allPostsTags, 'tagged') %>% 
   rbind(linkedInTagged)
 
-### get brand post metrics (AVGs) based on brand posts made over the last year
+# get post metrics (AVGs) based on posts made over the last year (for brand accounts only)
 posts1YRaverage <- getPostAverages()
 
 ###
 
+# find tagged posts by applying filter to all posts 
 campaignPosts <- taggedPosts %>% 
   filter(id == tagID) %>% 
   #filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
   distinct(perma_link, .keep_all = TRUE) %>% 
+  # calculate post performance compared to avgs.
   left_join(posts1YRaverage, by = c('post_type', 'account')) %>% 
   mutate(impressionsVavg= round((impressions - impressionsAVG)/impressionsAVG, 3),
          engrtVavg = round((engagementRate - engrtAVG)/engrtAVG, 3),
@@ -292,13 +298,12 @@ campaignPosts <- taggedPosts %>%
          post = 'Post') %>% 
   select(-c(impressionsAVG, engagementsAVG, engrtAVG)) %>% 
   relocate(perma_link, .after = post) %>% 
-  relocate(text, .after = perma_link) %>% 
-  mutate(dashboardCampaign = campaignID)
+  relocate(text, .after = perma_link) 
 
 # push data
 print('push social media data')
 
-ALL_SOCIAL_POSTS <- pushData(final, 'Social Media Posts')
+ALL_SOCIAL_POSTS <- pushData(campaignPosts, 'Social Media Posts')
 
 #### Monday.com
 
@@ -338,29 +343,31 @@ campaignDF <- data.frame(ID = campaignBoard[16, 'text'],
 # push data
 print('push monday.com data')
 
-ALL_MONDAY <- pushData(final, 'Campaign Overview')
+ALL_MONDAY <- pushData(campaignDF, 'Campaign Overview')
 
 
-##### CREATE CONTENT SUMMARY
+##### CREATE CONTENT SUMMARY #####
 
-social <- campaignPosts %>% 
+socialContent <- campaignPosts %>% 
   mutate(type = 'Social Media Posts') %>% 
   select(type, name = post_type) 
 
-salesforce <- final %>% 
+salesforceContent <- final %>% 
   select(name = CampaignName, EngagementType) %>% 
   distinct() %>% 
-  mutate(type = ifelse(EngagementType == 'Newsletter Click', 'Newsletters', 
+  mutate(type = ifelse(EngagementType == 'Newsletter', 'Newsletters', 
                        ifelse(EngagementType == 'Report Download', 'Reports', 
                               ifelse(EngagementType == 'Event', 'Events', '')))) %>% 
   select(type, name)
 
-media <- mediaReferrals %>% 
+mediaContent <- mediaReferrals %>% 
   mutate(type = 'Media Referrals') %>% 
   ungroup() %>% 
   select(type, name = mediaSubtype) 
 
-contentSummary <- social %>% rbind(salesforce) %>% rbind(media)
+contentSummary <- socialContent %>% 
+  rbind(salesforceContent) %>% 
+  rbind(mediaContent)
 
 ALL_CONTENT_SUMMARY <- pushData(contentSummary, 'Content Summary')
 
