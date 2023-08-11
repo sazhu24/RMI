@@ -1,48 +1,52 @@
 
-### GET PACKAGES AND FUNCTIONS
+#### GET PACKAGES AND FUNCTIONS #### 
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
-### SET CAMPAIGN
-# current options:
-# 1. OCI 
-# 2. Coal v Gas
+#### SET CAMPAIGN ####
+
+#' current options:
+#' 1. OCI 
+#' 2. Coal v Gas
+#' 
 campaign <- 'OCI'
 
-### API Tokens & OAuth Authentication
+#### API TOKENS & AUTHENTICATION ####
 
-## Monday.com Token
+#' Monday.com Token
 mondayToken <- Sys.getenv("Monday_Token")
 
-## Sprout Social Token
+#' Sprout Social Token
 sproutToken <- Sys.getenv("SproutSocial_Token")
 sproutHeader <- c("Authorization" = sproutToken, "Accept" = "application/json", "Content-Type" = "application/json")
 currentDate <- paste(Sys.Date())
 oneYearAgo <- ymd(currentDate) - years(1)
 
-## Pardot API Token & Request Headers
+#' Pardot API Token & Request Headers
 pardotTokenV4 <- Sys.getenv("Pardot_TokenV4")
 pardotTokenV5 <- Sys.getenv("Pardot_TokenV5")
 pardotBusinessID <- Sys.getenv("Pardot_Business_ID")
 header4 <- c("Authorization" = pardotTokenV4, "Pardot-Business-Unit-Id" = pardotBusinessID)
 header5 <- c("Authorization" = pardotTokenV5, "Pardot-Business-Unit-Id" = pardotBusinessID)
 
-## Google Authentication
+#' Google Authentication
 options(gargle_oauth_cache = ".secrets")
 gs4_auth(cache = ".secrets", email = "sazhu24@amherst.edu")
 
-## GA Authentication
+#' GA Authentication
 ga_auth(email = "sara.zhu@rmi.org")
 
-## SF Authentication
+#' SF Authentication
 sf_auth()
 
-## set google sheet
+###
+
+#' set Google sheet
 ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo4bxg6TI7DU/edit?usp=sharing'
 
-## set mode
-# standard mode binds data to existing rows
-# development mode overwrites all data in sheet
+#' set mode
+#' - standard mode binds data to existing rows
+#' - development mode overwrites all data in sheet
 mode <- 'development'
 
 #### READ CAMPAIGN KEY ####
@@ -203,7 +207,7 @@ ALL_WEB_GEO <- pushData(geographyTraffic, 'Web Traffic - Geography')
 ALL_WEB_REFERRALS <- pushData(mediaReferrals, 'Web Traffic - Referrals')
 
 
-##### EMAIL NEWSLETTERS ####
+####'EMAIL NEWSLETTERS ####
 message('GETTING NEWSLETTERS DATA')
 
 #' SUMMARY
@@ -408,7 +412,7 @@ query <- "query { boards (ids: 2208962537) { items { id name column_values{ id v
 res <- getMondayCall(query)
 activeProjects <- as.data.frame(res[["data"]][["boards"]][["items"]][[1]])
 
-#' iterate through APB to find projects with "Metrics Dashboard" in the promotion tactics column
+#' loop through Active Projects Board to find projects with "Metrics Dashboard" in the promotion tactics column
 campaigns <- data.frame(id = '', row = '', name = '')[0,]
 for(i in 1:nrow(activeProjects)){
   
@@ -454,7 +458,7 @@ message('pushing monday.com data')
 ALL_MONDAY <- pushData(targetCampaign, 'Campaign Overview')
 
 
-##### CREATE CONTENT SUMMARY #####
+#### CREATE CONTENT SUMMARY ####
 
 #' SUMMARY
 #' 
