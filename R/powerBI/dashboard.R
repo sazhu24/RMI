@@ -3,14 +3,6 @@
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")  
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
-#### SET CAMPAIGN ####
-
-#' current options:
-#' 1. OCI 
-#' 2. Coal v Gas
-#' 
-campaign <- 'OCI'
-
 #### API TOKENS & AUTHENTICATION ####
 
 #' Monday.com Token
@@ -48,6 +40,15 @@ ss <- 'https://docs.google.com/spreadsheets/d/1FtZQKYp4ESsY5yQzKuvGT5TorKSyMdvRo
 #' - standard mode binds data to existing rows
 #' - development mode overwrites all data in sheet
 mode <- 'development'
+
+#### SET CAMPAIGN ####
+
+#' current options:
+#' 1. OCI 
+#' 2. Coal v Gas
+
+campaigns <- c('OCI', 'Coal v Gas')
+campaign <- campaigns[2]
 
 #### READ CAMPAIGN KEY ####
 campaignKey <- read_sheet('https://docs.google.com/spreadsheets/d/1YyF4N2C9En55bqzisSi8TwUMzsvMnEc0jgFYdbBt3O0/edit?usp=sharing', 
@@ -160,9 +161,15 @@ if(length(propertyIDs) > 1){
     pivot_longer(cols = c(Sessions:'Form Submissions'), names_to = "type", values_to = "count") %>% 
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
-    mutate(totalPageViews = round(screenPageViews/6, 0),
-           count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
-    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
+    mutate(count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
+    filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup))
+  
+  numChannels <- allTraffic %>% group_by(pageTitle, type) %>% summarize(numChannels = n())
+  
+  allTraffic <- allTraffic %>% 
+    left_join(numChannels) %>% 
+    mutate('Page Views' = round(screenPageViews/numChannels, 2)) %>% 
+    select(-c(screenPageViews, numChannels))
   
   #' get social media acquisition and bind
   socialTrafficNS <- getTrafficSocial(sitePropertyID, pages, site = newSiteURL) 
@@ -192,9 +199,16 @@ if(length(propertyIDs) > 1){
     pivot_longer(cols = c(Sessions:'Form Submissions'), names_to = "type", values_to = "count") %>% 
     mutate(count = round(count, 1)) %>% 
     left_join(select(pageMetrics, c(pageTitle, screenPageViews:avgEngagementDuration, pageType, icon)), by = 'pageTitle') %>% 
-    mutate(totalPageViews = round(screenPageViews/6, 0),
-           count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
+    mutate(count = as.numeric(ifelse(is.na(count), 0, count))) %>% 
     filter(defaultChannelGroup != 'Unassigned' & !is.na(defaultChannelGroup)) 
+  
+  numChannels <- allTraffic %>% group_by(pageTitle, type) %>% summarize(numChannels = n())
+  
+  allTraffic <- allTraffic %>% 
+    left_join(numChannels) %>% 
+    mutate('Page Views' = round(screenPageViews/numChannels, 2)) %>% 
+    select(-c(screenPageViews, numChannels))
+  
 }
 
 
@@ -217,7 +231,10 @@ message('GETTING NEWSLETTERS DATA')
 #' 3. Write dataset
 
 #' get all email stats 
-allEmailStats <- getAllEmailStats()
+
+if(!exists('allEmailStats')){
+  allEmailStats <- getAllEmailStats()
+}
 
 #' get newsletter story URLs
 pageURLs <- pageData$pageURL
@@ -268,7 +285,9 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
   campaignList <- getCampaignList()
   
   #' get all accounts
-  all_accounts <- getAllAccounts() 
+  if(!exists('all_accounts')){
+    all_accounts <- getAllAccounts() 
+  }
   
   #' remove accounts with duplicate names to avoid errors when joining by Account name
   accountsUnique <- all_accounts[!duplicated(all_accounts$Account) & !duplicated(all_accounts$Account, fromLast = TRUE),] %>% 
@@ -285,20 +304,23 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
   #' get campaign member data for reports, events, and newsletter clicks
   if(hasReport == TRUE){
     campaignMembersReports <- getSalesforceReports()
-    df <- df %>% 
-      rbind(campaignMembersReports)
+    df <- df %>% rbind(campaignMembersReports)
   } 
   
   if(hasEvent == TRUE) {
     campaignMembersEvents <- getSalesforceEvents()
-    df <- df %>% 
-      rbind(campaignMembersEvents)
+    df <- df %>% rbind(campaignMembersEvents)
   } 
   
   if(hasEmail == TRUE) {
+    #' get all prospects
+    if(!exists('prospects')){
+      prospects <- getProspects() %>% 
+        mutate(Domain = sub("(.*)\\@", "", Email))
+    }
+    
     campaignMembersNewsletters <- getCampaignNewsletters()
-    df <- df %>% 
-      rbind(campaignMembersNewsletters)
+    df <- df %>% rbind(campaignMembersNewsletters)
   }
   
   #' remove duplicates
@@ -323,7 +345,7 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
 
 
 #' push data
-message('pushing salesforce data')
+message('PUSHING SALESFORCE DATA')
 
 ALL_SALESFORCE <- pushData(SFcampaigns, 'Salesforce')
 ALL_DONATIONS <- pushData(donations, 'SF Donations')
@@ -343,13 +365,13 @@ message('GETTING SOCIAL MEDIA DATA')
 #' 6. Filter by campaign tag to get campaign posts
 #' 7. Write dataset
 
-#' get profile IDs
+#' get all profile IDs
 #'   NOTE: profile IDs are unique to each social media account e.g. RMI Brand LinkedIn, RMI Buildings Twitter
 #'   when making an API call, supply the appropriate profile ID for each account you want to include
 metadeta <- getMetadata(url = 'metadata/customer')
 profileIDs <- metadeta[["data"]]
 
-#' get all tags
+#' get all sprout social tags
 metadeta <- getMetadata(url = 'metadata/customer/tags')
 tags <- metadeta[["data"]]
 
@@ -373,9 +395,16 @@ posts1YRaverage <- getPostAverages()
 ###
 
 #' find tagged posts by applying filter to all posts 
-campaignPosts <- taggedPosts %>% 
-  #filter(tag_id == tagID) %>% 
-  filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
+
+if(campaign == 'OCI'){
+  campaignPosts <- taggedPosts %>% 
+    filter(created_time >= '2023-04-05' & grepl('OCI\\+', text))
+} else{
+  campaignPosts <- taggedPosts %>% 
+    filter(tag_id == tagID)
+}
+
+campaignPosts <- campaignPosts %>% 
   distinct(perma_link, .keep_all = TRUE) %>% 
   #' calculate post performance compared to avgs.
   left_join(posts1YRaverage, by = c('post_type', 'account')) %>% 
@@ -391,7 +420,7 @@ campaignPosts <- taggedPosts %>%
   relocate(tag_name, .after = tag_id) 
 
 #' push data
-message('pushing social media data')
+message('PUSHING SOCIAL MEDIA DATA')
 
 ALL_SOCIAL_POSTS <- pushData(campaignPosts, 'Social Media Posts')
 
@@ -413,23 +442,20 @@ res <- getMondayCall(query)
 activeProjects <- as.data.frame(res[["data"]][["boards"]][["items"]][[1]])
 
 #' loop through Active Projects Board to find projects with "Metrics Dashboard" in the promotion tactics column
-campaigns <- data.frame(id = '', row = '', name = '')[0,]
+projects <- data.frame(id = '', row = '', name = '')[0,]
+
 for(i in 1:nrow(activeProjects)){
   
   board <- activeProjects[[3]][[i]]
   if(grepl('Metrics Dashboard', paste(board[11, 'text']))){
-    campaigns <- campaigns %>% 
+    projects <- projects %>% 
       rbind(c(paste(activeProjects[i, 'id']), i, c(paste(activeProjects[i, 'name'])))) 
   }
 }
 
-names(campaigns) <- c('id', 'row', 'name')
+names(projects) <- c('id', 'row', 'name')
 
-#' filter to find campaign
-targetCampaign <- campaigns %>% 
-  filter(grepl('Coal v Gas', name))
-
-for(i in 1:nrow(campaigns)){
+for(i in 1:nrow(projects)){
   
   metricsDashboardCampaigns <- data.frame(CAMPAIGN_ID = '', ID = '', audiences = '', promotionTactics = '')[0,]
   
@@ -453,7 +479,7 @@ targetCampaign <- metricsDashboardCampaigns %>%
   filter(CAMPAIGN_ID == campaignID)
 
 #' push data
-message('pushing monday.com data')
+message('PUSHING MONDAY.COM DATA')
 
 ALL_MONDAY <- pushData(targetCampaign, 'Campaign Overview')
 
@@ -488,7 +514,7 @@ contentSummary <- socialContent %>%
   rbind(salesforceContent) %>% 
   rbind(mediaContent)
 
-message('pushing content summary data')
+message('PUSHING CONTENT SUMMARY')
 ALL_CONTENT_SUMMARY <- pushData(contentSummary, 'Content Summary')
 
 

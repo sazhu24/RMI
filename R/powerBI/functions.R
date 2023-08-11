@@ -109,7 +109,7 @@ getPageMetrics <- function(propertyID, pages){
     mutate(engagementDuration = userEngagementDuration / totalUsers,
            sec = round(engagementDuration %% 60, 0),
            min = (engagementDuration / 60) |> floor(),
-           avgEngagementDuration = paste0(min, ':', sec)) %>% 
+           avgEngagementDuration = paste0(min, ':', ifelse(nchar(sec) == 1, paste0('0', sec), sec))) %>% 
     select(pageTitle, screenPageViews, totalUsers, engagementDuration, avgEngagementDuration) %>% 
     left_join(select(pageData, c(pageTitle, pageType, icon)), by = c('pageTitle')) %>% 
     #' remove " - RMI" from end of page titles
@@ -282,7 +282,8 @@ getAllEmailStats <- function(){
     mutate(date = as.Date(date))
   
   #' get Market Catalyst newsletters
-  emailStatsPEM <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Market Catalyst Stats (Unformatted)') 
+  emailStatsPEM <- read_sheet('https://docs.google.com/spreadsheets/d/1HoSpSuXpGN9tiKsggHayJdnmwQXTbzdrBcs_sVbAgfg/edit#gid=1938257643', sheet = 'All Market Catalyst Stats (Unformatted)') %>% 
+    mutate(date = as.Date(date))
   
   #' bind 
   allEmailStats <- emailStatsSpark %>% 
@@ -383,7 +384,6 @@ getProspectClicks <- function(df){
   
   return(clicksTotal)
 }
-
 
 #### SALESFORCE ####
 
@@ -666,7 +666,7 @@ cleanCampaignDF <- function(df){
         case_when(
           grepl('Corporate', AccountType) & is.na(Audience1) ~ 'Other Corporate',
           grepl('Foundation', AccountType) & is.na(Audience1)  ~ 'Foundation',
-          (grepl('Academic', AccountType) | grepl('edu$', Domain)) & (Account != '' | is.na(Account) | Account != 'Unknown') ~ 'Academic',
+          (grepl('Academic', AccountType)) & (Account != '' | is.na(Account) | Account != 'Unknown') ~ 'Academic',
           Account == 'Unknown'|is.na(Audience1) ~ 'N/A',
           .default = Audience1
         ),
@@ -676,7 +676,7 @@ cleanCampaignDF <- function(df){
     #' data manipulation easier on Power BI
     mutate(DownloadTF = ifelse(grepl('Download', EngagementType), 1, NA),
            EventTF = ifelse(grepl('Attended', Status), 1, NA),
-           EmailClickTF = ifelse(grepl('Click', EngagementType), 1, NA),
+           EmailClickTF = ifelse(grepl('Newsletter', EngagementType), 1, NA),
            GivingCircleTF = ifelse(DonorType == 'Solutions Council'|DonorType == 'Innovators Circle', 1, NA),
            SolutionsCouncilTF = ifelse(DonorType == 'Solutions Council', 1, NA),
            InnovatorsCircleTF = ifelse(DonorType == 'Innovators Circle', 1, NA),
@@ -719,10 +719,6 @@ getSalesforceEvents <- function(){
 getCampaignNewsletters <- function(){
   
   message('getting newsletter clicks')
-  
-  #' get all prospects
-  prospects <- getProspects() %>% 
-    mutate(Domain = sub("(.*)\\@", "", Email))
   
   #' get email IDs and story URLs from newsletters in this campaign
   emailIDs <- data.frame(id = unique(campaignNewsletters$id))
@@ -775,7 +771,7 @@ getCampaignNewsletters <- function(){
 ##' get opportunities
 getOpportunities <- function(df){
   
-  message('get donations')
+  message('getting donations')
   allOpportunities <- data.frame(DonationID = '', DonationDate = '', DonationValue = '', Pardot_ID = '', EngagementDate = '',
                                  EngagementType = '', CampaignName = '', Pardot_Score = '',
                                  TotalGiving = '', DonorType = '')[0,]
