@@ -93,7 +93,7 @@ metadataGA4 <- ga_meta(version = "data", rmiPropertyID)
 dateRangeGA <- c("2023-01-01", paste(currentDate))
 
 #' get referral sites
-referralSites <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/referralSites.xlsx') 
+referralSites <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/files/referralSites.xlsx') 
 
 #' define site using property ID
 campaignPages <- campaignPages %>% 
@@ -294,10 +294,10 @@ if(hasReport == TRUE | hasEvent == TRUE | hasEmail == TRUE){
     filter(!grepl('unknown|not provided|contacts created by revenue grid', Account))
   
   #' get domain info for gov accounts
-  govDomains <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/govDomains.xlsx') 
+  govDomains <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/files/govDomains.xlsx') 
   
   #' get audience domains and accounts
-  audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/audiences/audienceGroups.xlsx')
+  audienceGroups <- read.xlsx('/Users/sara/Desktop/GitHub/RMI_Analytics/files/audienceGroups.xlsx')
   audienceAccounts <- audienceGroups %>% select(Account, type) %>% filter(!is.na(Account)) %>% distinct(Account, .keep_all = TRUE)
   audienceDomains <- audienceGroups %>% select(Domain, type) %>% filter(!is.na(Domain)) %>% distinct(Domain, .keep_all = TRUE)
 
