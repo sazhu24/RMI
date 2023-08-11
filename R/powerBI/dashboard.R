@@ -4,7 +4,6 @@ source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/packages.R")
 source("/Users/sara/Desktop/GitHub/RMI_Analytics/R/powerBI/functions.R")  
 
 ### SET CAMPAIGN
-
 # current options:
 # 1. OCI 
 # 2. Coal v Gas
@@ -350,11 +349,11 @@ profileIDs <- metadeta[["data"]]
 metadeta <- getMetadata(url = 'metadata/customer/tags')
 tags <- metadeta[["data"]]
 
-#' find the appropriate campaign tag ID using the socialTag
+#' find the appropriate campaign tag ID using the socialTag variable
 campaignTag <- tags %>% filter(text == socialTag)
 tagID <- paste(campaignTag$tag_id)
 
-#' get all social media posts with tags  -excluding posts from linkedIn program channels
+#' get all social media posts with tags except for posts made from program LinkedIn accounts
 allPostsTags <- getAllSocialPosts()
 
 #' get all posts from linkedIn program channels
