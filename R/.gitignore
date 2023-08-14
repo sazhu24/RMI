@@ -38,3 +38,6 @@ RMI_Analytics.Rproj
 allData.R
 .secrets
 .httr-oauth-salesforcer
+#
+R/social_media/sproutsocial_private.R
+R/social_media/dataset.xlsx

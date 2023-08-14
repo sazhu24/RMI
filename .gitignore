@@ -2,5 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
-social_media/sproutsocial_private.R
-social_media/dataset.xlsx
+R/social_media/sproutsocial_private.R
+R/social_media/dataset.xlsx
