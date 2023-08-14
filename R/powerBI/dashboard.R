@@ -365,11 +365,9 @@ message('GETTING SOCIAL MEDIA DATA')
 #' 6. Filter by campaign tag to get campaign posts
 #' 7. Write dataset
 
-#' get all profile IDs
-#'   NOTE: profile IDs are unique to each social media account e.g. RMI Brand LinkedIn, RMI Buildings Twitter
-#'   when making an API call, supply the appropriate profile ID for each account you want to include
-metadeta <- getMetadata(url = 'metadata/customer')
-profileIDs <- metadeta[["data"]]
+#' get all sprout social tags
+metadeta <- getMetadata(url = 'metadata/customer/tags')
+tags <- metadeta[["data"]]
 
 #' get post averages based on all posts made over the last year 
 posts1YRaverages <- getPostAverages()
@@ -402,6 +400,7 @@ taggedPosts <- cleanPostDF(allPostsTags, 'tagged') %>%
 
 #' find tagged posts for this campaign
 if(campaign == 'OCI'){
+  #' OCI posts were not tagged properly so get these by creating a custom filter
   campaignPosts <- taggedPosts %>% 
     filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
     distinct(perma_link, .keep_all = TRUE) 
