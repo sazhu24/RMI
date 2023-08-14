@@ -371,13 +371,8 @@ message('GETTING SOCIAL MEDIA DATA')
 metadeta <- getMetadata(url = 'metadata/customer')
 profileIDs <- metadeta[["data"]]
 
-#' get all sprout social tags
-metadeta <- getMetadata(url = 'metadata/customer/tags')
-tags <- metadeta[["data"]]
-
-#' find the appropriate campaign tag ID using the socialTag variable
-campaignTag <- tags %>% filter(text == socialTag)
-tagID <- paste(campaignTag$tag_id)
+#' get post averages based on all posts made over the last year 
+posts1YRaverages <- getPostAverages()
 
 #' get all social media posts with tags except for posts made from program LinkedIn accounts
 allPostsTags <- getAllSocialPosts()
@@ -387,37 +382,34 @@ linkedInTagged <- getLIProgramPosts('tagged')
 
 #' clean and bind linkedin program posts to all posts
 taggedPosts <- cleanPostDF(allPostsTags, 'tagged') %>% 
-  rbind(linkedInTagged)
-
-#' get post averages based on all posts made over the last year 
-posts1YRaverage <- getPostAverages()
-
-###
-
-#' find tagged posts by applying filter to all posts 
-
-if(campaign == 'OCI'){
-  campaignPosts <- taggedPosts %>% 
-    filter(created_time >= '2023-04-05' & grepl('OCI\\+', text))
-} else{
-  campaignPosts <- taggedPosts %>% 
-    filter(tag_id == tagID)
-}
-
-campaignPosts <- campaignPosts %>% 
-  distinct(perma_link, .keep_all = TRUE) %>% 
+  rbind(linkedInTagged) %>% 
+  left_join(posts1YRaverages, by = c('post_type', 'account')) %>% 
   #' calculate post performance compared to avgs.
-  left_join(posts1YRaverage, by = c('post_type', 'account')) %>% 
-  mutate(impressionsVavg = round((impressions - impressionsAVG)/impressionsAVG, 3),
-         engagementsVavg = round((engagements - engagementsAVG)/engagementsAVG, 3),
-         engrtVavg = round((engagementRate - engrtAVG)/engrtAVG, 3),
+  mutate(impressionsVmedian = round((impressions - impressionsMedian)/impressionsMedian, 3),
+         engagementsVmedian = round((engagements - engagementsMedian)/engagementsMedian, 3),
+         engrtVmedian = round((engagementRate - engrtMedian)/engrtMedian, 3),
+         impressionsVmean = round((impressions - impressionsMean)/impressionsMean, 3),
+         engagementsVmean = round((engagements - engagementsMean)/engagementsMean, 3),
+         engrtVmean = round((engagementRate - engrtMean)/engrtMean, 3),
          brand = ifelse(grepl('RMI Brand', account), 1, 0),
          program = ifelse(brand == 1, 0, 1),
          accountType = ifelse(brand == 1, 'RMI Brand', 'RMI Program'),
          post = 'Post') %>% 
-  relocate(perma_link, .after = post) %>% 
-  relocate(text, .after = perma_link) %>% 
-  relocate(tag_name, .after = tag_id) 
+  select(created_time, account, post_type, icon, tag_id, tag_name, 
+         impressions, impressionsVmedian, impressionsVmean, engagements, engagementsVmedian, engagementsVmean, 
+         engagementRate, engrtVmedian, engrtVmean, postClicks, shares, 
+         brand, program, accountType, post, perma_link, text)
+
+#' find tagged posts for this campaign
+if(campaign == 'OCI'){
+  campaignPosts <- taggedPosts %>% 
+    filter(created_time >= '2023-04-05' & grepl('OCI\\+', text)) %>% 
+    distinct(perma_link, .keep_all = TRUE) 
+} else{
+  campaignPosts <- taggedPosts %>% 
+    filter(tag_name == socialTag) %>% 
+    distinct(perma_link, .keep_all = TRUE) 
+}
 
 #' push data
 message('PUSHING SOCIAL MEDIA DATA')

@@ -874,7 +874,7 @@ getCall <- function(url, args) {
 sproutPostRequest <- function(page, dateRange, profileIDs, tagged = TRUE){
   
   #' set tagged == FALSE when making call to get all posts (returns distinct posts rather than duplicate posts if a post has multiple tags)
-  #' some posts this far back weren't getting tagged so the internal.tags.id field returns an error
+  #' explanation: some posts this far back weren't getting tagged so the internal.tags.id field would return an error
   if(tagged == TRUE) {
     fields <- c(
       "created_time",
@@ -883,7 +883,7 @@ sproutPostRequest <- function(page, dateRange, profileIDs, tagged = TRUE){
       "internal.tags.id",
       "post_type")
   } else {
-    #' remove internal.tags.id field if AVG == TRUE
+    #' remove internal.tags.id field if tagged == FALSE
     fields <- c(
       "created_time",
       "perma_link",
@@ -895,10 +895,10 @@ sproutPostRequest <- function(page, dateRange, profileIDs, tagged = TRUE){
   args <- list(
     "fields" = fields,
     #' profile IDs are specific to an account (e.g. RMI Brand LinkedIn, RMI Buildings Twitter)
-    #' make sure to supply the appropriate profileIDs for each account you want to include in your request
+    #' you must supply the profile ID of each account you want to include in your request
     "filters" = c(paste0("customer_profile_id.eq", profileIDs),
                   dateRange),
-    #' post metrics
+    #' set post metrics
     "metrics" = c("lifetime.impressions", "lifetime.engagements", "lifetime.post_content_clicks", "lifetime.shares_count"), 
     "timezone" = "America/Denver",
     "page" = paste(page))
@@ -907,7 +907,7 @@ sproutPostRequest <- function(page, dateRange, profileIDs, tagged = TRUE){
   getStats <- getCall(url = 'analytics/posts', args = args)
   
   #' call returns 50 posts at a time
-  #' NULL indicates that you have reached the last page of results, so make call until value is NULL
+  #' NULL indicates that you have reached the last page of results so make this call until the paging field returns NULL
   if(is.null(getStats[["paging"]])) {
     postStats <- NULL
   } else if(tagged == TRUE) {
@@ -955,18 +955,19 @@ getAllSocialPosts <- function(){
 
 #' clean response
 cleanPostDF <- function(df, type, linkedin = 'FALSE'){
-
+  
   posts <- df %>% 
     mutate(engagementRate = round(as.numeric(lifetime.engagements)/as.numeric(lifetime.impressions), 3),
            created_time = as.Date(sub('T(.*)', '', created_time)),
-           icon = '') %>% 
-    mutate(across(lifetime.impressions:engagementRate, ~ as.numeric(.x))) %>% 
-    filter(!is.na(lifetime.impressions)) %>% 
-    mutate(account = '')
+           icon = '',
+           account = '',
+           across(lifetime.impressions:engagementRate, ~ as.numeric(.x))) %>% 
+    filter(!is.na(lifetime.impressions)) 
   
   for(i in 1:nrow(posts)){
     
     #' rename post types
+    #' define platform icon for Power BI
     if(grepl('LINKEDIN_COMPANY_UPDATE', posts[i, 'post_type'])){
       posts[i, 'post_type'] <- "LinkedIn"
       posts[i, 'icon'] <- paste(1)
@@ -981,13 +982,14 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
       posts[i, 'icon'] <- paste(4)
     }
     
-    #' call doesn't return the account/profileID that made the post so use
-    #' post links to identify the account
-    #' this works for all platforms except LinkedIn, which doesn't include
-    #' account info in post URLs
+    #' identify accounts using post URLs
+    #' explanation: the call doesn't return the account/profileID that made the post so use post links - perma_link field - to identify the account
+    #' note: this works for all platforms except LinkedIn, which doesn't include account info in post URLs
     link <- posts[i, 'perma_link']
     
-    if(grepl('twitter.com/RMI_Industries', link)){
+    if(grepl('twitter.com/RockyMtnInst|www.facebook.com/344520634375161|www.instagram.com|linkedin.com|344046974422527', link) & linkedin == 'FALSE'){
+      posts[i, 'account'] <- 'RMI Brand'
+    } else if(grepl('twitter.com/RMI_Industries', link)){
       posts[i, 'account'] <- 'RMI Industries'
     } else if(grepl('twitter.com/RMIPolicy', link)){
       posts[i, 'account'] <- 'RMI Policy'
@@ -999,8 +1001,6 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
       posts[i, 'account'] <- 'RMI Emissions'
     } else if(grepl('twitter.com/RMIAfrica', link)){
       posts[i, 'account'] <- 'RMI Africa'
-    } else if(grepl('twitter.com/RockyMtnInst|www.facebook.com/344520634375161|www.instagram.com|linkedin.com|344046974422527', link) & linkedin == 'FALSE'){
-      posts[i, 'account'] <- 'RMI Brand'
     } else if(grepl('twitter.com/RMIElectricity', link)){
       posts[i, 'account'] <- 'RMI Electricity'
     } else if(grepl('twitter.com/RMICities', link)){
@@ -1017,7 +1017,8 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
       posts[i, 'account'] <- 'Jon Creyts'
     }
     
-    #' identify LinkedIn program accounts by making separate calls for each of the following
+    #' identify LinkedIn program accounts after making separate calls for each program LinkedIn account
+    #' after making each call, provide the account name as an argument using the 'linkedin' parameter
     if(linkedin == 'Buildings'){
       posts[i, 'account'] <- 'RMI Buildings'
     } else if(linkedin == 'Transportation'){
@@ -1031,15 +1032,15 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   
   if(type == 'tagged'){
     posts <- posts %>% 
-      select(created_time, account, post_type, icon, tag_id = id, text, impressions = lifetime.impressions, 
+      left_join(select(tags, c(id = tag_id, tag_name = text)), by = 'id') %>% 
+      select(created_time, account, post_type, icon, tag_id = id, tag_name, text, impressions = lifetime.impressions, 
              engagements = lifetime.engagements, engagementRate, postClicks = lifetime.post_content_clicks,
-             shares = lifetime.shares_count, perma_link) %>% 
-      left_join(select(tags, c(tag_id, tag_name = text)), by = 'tag_id')
+             shares = lifetime.shares_count, perma_link, text)
   } else {
     posts <- posts %>% 
-      select(created_time, account, post_type, icon, text, impressions = lifetime.impressions, 
+      select(created_time, account, post_type, icon, impressions = lifetime.impressions, 
              engagements = lifetime.engagements, engagementRate, postClicks = lifetime.post_content_clicks,
-             shares = lifetime.shares_count, perma_link) 
+             shares = lifetime.shares_count, perma_link, text) 
   } 
   
   posts <- posts %>% 
@@ -1049,38 +1050,55 @@ cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   return(posts)
 }
 
-#' get LinkedIn posts from program LinkedIn accounts 
+#' make separate calls for LinkedIn program accounts - get all LinkedIn posts from these accounts 
+#' if requesting tagged posts, call only works if earliest date >= April 2023
 getPosts <- function(ids, type){
+  
+  AP <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
+                   lifetime.impressions = '', lifetime.post_content_clicks = '', 
+                   lifetime.engagements = '', lifetime.shares_count = '')[0, ]
   
   APT <- data.frame(created_time = '', post_type = '', text = '', perma_link = '', 
                     lifetime.impressions = '', lifetime.post_content_clicks = '', 
                     lifetime.engagements = '', lifetime.shares_count = '', id = '')[0, ]
   
   for(i in 1:100){
-    postStats <- sproutPostRequest(i, paste0("created_time.in(2023-04-01T00:00:00..", currentDate, "T23:59:59)"), profileIDs = ids) 
-    if(is.null(postStats)){ break }
-    
-    postStats <- postStats %>% unnest(tags)
-    APT <- APT %>% rbind(postStats)
-    
+    if(type == 'tagged'){
+      postStats <- sproutPostRequest(i, 
+                                     paste0("created_time.in(2023-04-01T00:00:00..", currentDate, "T23:59:59)"), 
+                                     profileIDs = ids, 
+                                     tagged = TRUE) 
+      if(is.null(postStats)){ break }
+      postStats <- postStats %>% unnest(tags)
+      APT <- APT %>% rbind(postStats)
+    } else if (type == 'all'){
+      postStats <- sproutPostRequest(i, 
+                                     dateRange = paste0("created_time.in(", oneYearAgo, "T00:00:00..", currentDate, "T23:59:59)"), 
+                                     profileIDs = ids, 
+                                     tagged = FALSE) 
+      if(is.null(postStats)){ break }
+      AP <- AP %>% rbind(postStats)
+    }
   }
   
-  return(APT)
+  if(type == 'tagged') return(APT) else return(AP)
   
 }
 
-#' get and bind all posts from program accounts after adding an account identifier
+#' get all posts from LinkedIn program accounts 
+#' pass account name as an argument to the linkedin paramater
+#' bind all
 getLIProgramPosts <- function(type){
-  LICFAN <- cleanPostDF(getPosts('(5381251)', type), type = type, linkedin = 'CFAN')
-  LICCAF <- cleanPostDF(getPosts('(5403265)', type), type = type, linkedin = 'CCAF')
-  LIBUILD <- cleanPostDF(getPosts('(5541628)', type), type = type, linkedin = 'Buildings')
-  LITRANSPORT <- cleanPostDF(getPosts('(5635317)', type), type = type, linkedin = 'Transportation')
+  LI_CFAN <- cleanPostDF(getPosts('(5381251)', type = type), type = type, linkedin = 'CFAN')
+  LI_CCAF <- cleanPostDF(getPosts('(5403265)', type = type), type = type, linkedin = 'CCAF')
+  LI_BUILD <- cleanPostDF(getPosts('(5541628)', type = type), type = type, linkedin = 'Buildings')
+  LI_TRANSPORT <- cleanPostDF(getPosts('(5635317)', type = type), type = type, linkedin = 'Transportation')
   
-  LI <- LICFAN %>% rbind(LICCAF) %>% rbind(LIBUILD) %>% rbind(LITRANSPORT)
-  return(LI)
+  LI_PROGRAM <- LI_CFAN %>% rbind(LI_CCAF) %>% rbind(LI_BUILD) %>% rbind(LI_TRANSPORT)
+  return(LI_PROGRAM)
 }
 
-#' get post metrics (AVGs) based on all posts made over the last year (brand accounts only)
+#' get post metrics (AVGs) based on all posts made over the last year
 getPostAverages <- function(){
   
   posts1YR <- data.frame(created_time = '', post_type = '', text = '', perma_link = '',
@@ -1098,18 +1116,28 @@ getPostAverages <- function(){
     posts1YR <- posts1YR %>% rbind(postStats)
   }
   
-  posts1YRaverage <- cleanPostDF(posts1YR, 'all') %>%
+  linkedInAll <- getLIProgramPosts('all')
+  
+  allPosts1YR <- cleanPostDF(posts1YR, 'all') %>%
+    rbind(linkedInAll) %>% 
     #' filter out reposts
     filter(impressions > 0,
            !grepl('ugcPost', perma_link),
-           account != '') %>%
+           account != '')
+  
+  posts1YRaverages <- allPosts1YR %>%
     group_by(post_type, account) %>%
     summarize(
-      impressionsAVG = round(mean(impressions, na.rm = TRUE), 1),
-      engagementsAVG = round(mean(engagements), 1),
-      engrtAVG = round(mean(engagementRate), 3))
+      numPosts = n(),
+      impressionsMedian = round(median(impressions, na.rm = TRUE), 1),
+      impressionsMean = round(mean(impressions, na.rm = TRUE), 1),
+      engagementsMedian = round(median(engagements), 1),
+      engagementsMean = round(mean(engagements), 1),
+      engrtMedian = round(median(engagementRate), 3),
+      engrtMean = round(mean(engagementRate), 3)
+    ) 
   
-  return(posts1YRaverage)
+  return(posts1YRaverages)
 }
 
 #### MONDAY.COM ####
