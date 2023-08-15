@@ -29,6 +29,14 @@ sproutHeader <- c("Authorization" = sproutToken, "Accept" = "application/json", 
 
 #### FUNCTIONS ####
 
+#' metadata request
+getMetadata <- function(url) {
+  request <- GET(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
+                 add_headers(sproutHeader)
+  )
+  return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
+}
+
 #' call for all other requests
 getCall <- function(url, args) {
   request <- POST(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
@@ -124,6 +132,7 @@ getAllSocialPosts <- function(){
 #' clean response
 cleanPostDF <- function(df, type, linkedin = 'FALSE'){
   
+  #' create engagement rate
   posts <- df %>% 
     mutate(engagementRate = round(as.numeric(lifetime.engagements)/as.numeric(lifetime.impressions), 3),
            created_time = as.Date(sub('T(.*)', '', created_time)),
@@ -317,7 +326,7 @@ message('GETTING SOCIAL MEDIA DATA')
 #' 3. Get all posts for program Linkedin accounts, add account identifier, then bind all of these to posts retrieved in step 1
 #' 4. Get averages for all get posts made over the last year, left join these values to all posts df
 #' 6. Filter by campaign tag to get campaign posts
-#' 7. Write dataset
+#' 7. Write data set
 
 #' set date variables using current date
 currentDate <- paste(Sys.Date())
@@ -326,14 +335,6 @@ oneYearAgo <- ymd(currentDate) - years(1)
 #' get all sprout social tags
 metadeta <- getMetadata(url = 'metadata/customer/tags')
 tags <- metadeta[["data"]]
-
-#' metadata request
-getMetadata <- function(url) {
-  request <- GET(url = paste0('https://api.sproutsocial.com/v1/805215/', url),
-                 add_headers(sproutHeader)
-  )
-  return(jsonlite::fromJSON(content(request, as = "text", encoding = "UTF-8")))
-}
 
 #' get post averages based on all posts made over the last year 
 posts1YRaverages <- getPostAverages()
